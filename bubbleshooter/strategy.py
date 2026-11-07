@@ -75,7 +75,28 @@ def _landing_cell(point, occupied, cells):
     return best if best and best[0] <= MAX_SNAP_DIST else None
 
 
-def _evaluate(cell, bubbles, shooter_color, max_row, weights):
+def _colour_labels(bubbles):
+    reps, labels = [], {}
+    for b in bubbles:
+        for i, rep in enumerate(reps):
+            if colors_match(b["color"], rep):
+                labels[id(b)] = i
+                break
+        else:
+            reps.append(b["color"])
+            labels[id(b)] = len(reps) - 1
+    return labels
+
+
+def _wiped_colours(labels, removed_ids, remaining_total, weights):
+    if remaining_total <= weights.wipe_free_bubbles:
+        return 0
+    before = set(labels.values())
+    after = {label for bid, label in labels.items() if bid not in removed_ids}
+    return len(before - after)
+
+
+def _evaluate(cell, bubbles, shooter_color, max_row, weights, labels):
     cx, cy, row = cell
     placed = {"x": cx, "y": cy, "color": shooter_color, "row": row}
     everything = bubbles + [placed]
@@ -98,6 +119,8 @@ def _evaluate(cell, bubbles, shooter_color, max_row, weights):
                     frontier.append(n)
         dropped = len(rest) - len(anchored)
         score = len(cluster) + weights.drop_weight * dropped + weights.depth_weight * row
+        removed_ids = cluster | {id(b) for b in rest if id(b) not in anchored}
+        score -= weights.color_wipe_penalty * _wiped_colours(labels, removed_ids, len(anchored), weights)
         if max_row >= weights.pressure_row:
             new_max_row = max((b["row"] for b in rest if id(b) in anchored), default=0)
             score += weights.front_weight * (max_row - new_max_row)
@@ -116,6 +139,7 @@ def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=Str
         cells = _lattice(bubbles)
         occupied = {(b["x"], b["y"]) for b in bubbles}
         max_row = max(b["row"] for b in bubbles)
+        labels = _colour_labels(bubbles)
         by_cell = {}
         steps = int((ANGLE_MAX_DEG - ANGLE_MIN_DEG) / ANGLE_STEP_DEG) + 1
         for i in range(steps):
@@ -128,7 +152,7 @@ def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=Str
                 by_cell.setdefault(cell[1:], []).append(deg)
         best = None
         for cell, degs in by_cell.items():
-            score, why = _evaluate(cell, bubbles, shooter_color, max_row, weights)
+            score, why = _evaluate(cell, bubbles, shooter_color, max_row, weights, labels)
             score += min(len(degs), WIDTH_BONUS_CAP) * WIDTH_BONUS
             if best is None or score > best[0]:
                 best = (score, cell, degs, why)
