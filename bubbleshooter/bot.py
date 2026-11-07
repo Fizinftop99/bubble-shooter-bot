@@ -74,6 +74,11 @@ class HumanAimer:
             time.sleep(delay)
 
     def shoot(self, page, canvas_bbox, target):
+        if not self._pacing.human_aim:
+            end = (canvas_bbox["x"] + target[0], canvas_bbox["y"] + target[1])
+            page.mouse.move(*end)
+            page.mouse.click(*end)
+            return end
         end = jittered_point(canvas_bbox, target)
         origin = (canvas_bbox["x"] + layout.SHOOTER_POS[0], canvas_bbox["y"] + layout.SHOOTER_POS[1])
         pos = self._pos or origin

@@ -12,7 +12,7 @@ class BrowserSettings:
     browser_path: str = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
     game_url: str = "https://www.bubbleshooter.com/"
     viewport_width: int = 1280
-    viewport_height: int = 900
+    viewport_height: int = 720
     canvas_timeout_ms: int = 30_000
     block_ads: bool = True
     user_data_dir: str = ".brave-profile"
@@ -34,6 +34,8 @@ class PacingSettings:
     aim_max_s: float = 1.0
     shot_wait_s: float = 1.2
     waypoint_count_weights: tuple = (0.3, 0.5, 0.2)
+    human_aim: bool = True
+    adaptive_wait: bool = False
 
 
 @dataclass(frozen=True)

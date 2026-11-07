@@ -72,7 +72,7 @@ All settings are optional; anything missing from `.env` falls back to the defaul
 | Group | Variables |
 | --- | --- |
 | Browser | `BROWSER_PATH`, `GAME_URL`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`, `CANVAS_TIMEOUT_MS`, `BLOCK_ADS`, `USER_DATA_DIR` |
-| Pacing (how human the aiming looks) | `AIM_SPEED_PX_S`, `AIM_MIN_S`, `AIM_MAX_S`, `SHOT_WAIT_S`, `WAYPOINT_COUNT_WEIGHTS` |
+| Pacing (how human the aiming looks) | `AIM_SPEED_PX_S`, `AIM_MIN_S`, `AIM_MAX_S`, `SHOT_WAIT_S`, `WAYPOINT_COUNT_WEIGHTS`, `HUMAN_AIM`, `ADAPTIVE_WAIT` |
 | Strategy weights | `DROP_WEIGHT`, `DEPTH_WEIGHT`, `MISS_BASE`, `FRIEND_WEIGHT`, `GROWTH_PENALTY`, `PRESSURE_ROW`, `FRONT_WEIGHT` |
 | Run limits and output | `MAX_PLAY_MINUTES`, `MAX_SHOTS` (0 = unlimited), `SCREENSHOT_DIR` |
 

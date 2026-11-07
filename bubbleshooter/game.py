@@ -9,6 +9,9 @@ LOW_COUNT_LIMIT = 4
 STALL_LIMIT = 8
 EMPTY_WAIT_LIMIT = 20
 ERROR_REOPEN_LIMIT = 3
+SETTLE_POLL_S = 0.04
+SETTLE_TIMEOUT_S = 3.0
+SETTLE_STABLE_FRAMES = 2
 
 
 class GameLoop:
@@ -79,7 +82,33 @@ class GameLoop:
             return
         self._shots += 1
         print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} rows={max(b['row'] for b in bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
-        time.sleep(self._settings.pacing.shot_wait_s)
+        if self._settings.pacing.adaptive_wait:
+            self._wait_settled(bubbles)
+        else:
+            time.sleep(self._settings.pacing.shot_wait_s)
+
+    def _wait_settled(self, before):
+        before_sig = self._board_signature(before)
+        deadline = time.monotonic() + SETTLE_TIMEOUT_S
+        last, stable, changed = None, 0, False
+        while time.monotonic() < deadline:
+            try:
+                img, _ = self._browser.grab_frame()
+            except Exception:
+                return
+            if vision.is_game_over(img):
+                return
+            sig = self._board_signature(vision.find_grid_bubbles(img))
+            changed = changed or sig != before_sig
+            stable = stable + 1 if sig == last else 0
+            last = sig
+            if changed and stable >= SETTLE_STABLE_FRAMES:
+                return
+            time.sleep(SETTLE_POLL_S)
+
+    @staticmethod
+    def _board_signature(bubbles):
+        return tuple(sorted((b["x"], b["y"]) for b in bubbles))
 
     def _on_error(self, error):
         print(f"[error] frame grab failed: {str(error).splitlines()[0]}")

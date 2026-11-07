@@ -10,6 +10,7 @@ from . import adblock
 GAME_FRAME_SELECTOR = "iframe[src*='bubbleshooter-game']"
 SETTLE_WAIT_S = 1.2
 SCREENSHOT_FORMAT = "png"
+WINDOW_MARGIN_PX = (20, 140)
 
 
 class GameBrowser:
@@ -33,6 +34,7 @@ class GameBrowser:
             headless=False,
             executable_path=cfg.browser_path,
             viewport=cfg.viewport,
+            args=[f"--window-size={cfg.viewport_width + WINDOW_MARGIN_PX[0]},{cfg.viewport_height + WINDOW_MARGIN_PX[1]}"],
             ignore_default_args=["--disable-extensions"],
         )
         if cfg.block_ads:
