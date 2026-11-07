@@ -35,6 +35,12 @@ class GameBrowser:
             except Exception:
                 pass
 
+    def is_open(self):
+        try:
+            return self._browser.is_connected() and not self.page.is_closed()
+        except Exception:
+            return False
+
     def reopen(self):
         try:
             self.page.close()

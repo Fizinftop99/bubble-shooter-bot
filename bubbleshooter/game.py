@@ -23,6 +23,7 @@ class GameLoop:
         self._error_streak = 0
         self._last_sig = None
         self._last_bbox = None
+        self._window_closed = False
         self._started = time.monotonic()
 
     def run(self):
@@ -36,6 +37,8 @@ class GameLoop:
 
     def _stop_reason(self):
         run = self._settings.run
+        if self._window_closed:
+            return "browser window closed"
         if self._low_streak >= LOW_COUNT_LIMIT or self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT:
             return "game over"
         if run.max_shots and self._shots >= run.max_shots:
@@ -76,6 +79,9 @@ class GameLoop:
 
     def _on_error(self, error):
         print(f"[error] frame grab failed: {str(error).splitlines()[0]}")
+        if not self._browser.is_open():
+            self._window_closed = True
+            return
         self._error_streak += 1
         if self._error_streak >= ERROR_REOPEN_LIMIT:
             print("[recover] reopening page")
@@ -93,7 +99,7 @@ class GameLoop:
         self._last_sig = sig
 
     def _save_final_screenshot(self):
-        if self._last_bbox is None:
+        if self._last_bbox is None or self._window_closed:
             return None
         shot_dir = Path(self._settings.run.screenshot_dir)
         shot_dir.mkdir(exist_ok=True)
