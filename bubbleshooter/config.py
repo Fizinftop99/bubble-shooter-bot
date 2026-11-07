@@ -15,6 +15,12 @@ class BrowserSettings:
     viewport_height: int = 900
     canvas_timeout_ms: int = 30_000
     block_ads: bool = True
+    user_data_dir: str = ".brave-profile"
+
+    @property
+    def profile_path(self):
+        path = Path(self.user_data_dir)
+        return path if path.is_absolute() else ENV_FILE.parent / path
 
     @property
     def viewport(self):

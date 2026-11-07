@@ -3,3 +3,5 @@
 __pycache__/
 screens/
 scratch/
+.brave-profile/
+screens_*/

@@ -14,7 +14,6 @@ class GameBrowser:
     def __init__(self, settings):
         self._settings = settings
         self._playwright = None
-        self._browser = None
         self._context = None
         self.page = None
         self._canvas = None
@@ -25,11 +24,23 @@ class GameBrowser:
         return self
 
     def _launch(self):
-        self._browser = self._playwright.chromium.launch(headless=False, executable_path=self._settings.browser.browser_path)
-        self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
+        cfg = self._settings.browser
+        self._context = self._playwright.chromium.launch_persistent_context(
+            str(cfg.profile_path),
+            headless=False,
+            executable_path=cfg.browser_path,
+            viewport=cfg.viewport,
+            ignore_default_args=["--disable-extensions"],
+        )
+        if cfg.block_ads:
+            adblock.install(self._context)
+        pages = self._context.pages
+        self.page = pages[0] if pages else self._context.new_page()
+        for extra in pages[1:]:
+            extra.close()
 
     def __exit__(self, *exc):
-        for closer in (self._browser and self._browser.close, self._playwright and self._playwright.stop):
+        for closer in (self._context and self._context.close, self._playwright and self._playwright.stop):
             try:
                 closer and closer()
             except Exception:
@@ -37,7 +48,7 @@ class GameBrowser:
 
     def is_open(self):
         try:
-            return self._browser.is_connected() and not self.page.is_closed()
+            return not self.page.is_closed()
         except Exception:
             return False
 
@@ -47,7 +58,7 @@ class GameBrowser:
         except Exception:
             pass
         try:
-            self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
+            self.page = self._context.new_page()
         except Exception:
             self._launch()
         self.open_game()
