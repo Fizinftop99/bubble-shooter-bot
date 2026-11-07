@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -67,20 +67,30 @@ class Settings:
     run: RunSettings = field(default_factory=RunSettings)
 
 
-def _from_env(cls):
+def _from_values(cls, getter, base=None):
+    base = base or cls()
     overrides = {}
     for f in fields(cls):
-        raw = os.getenv(f.name.upper(), "").strip()
+        raw = str(getter(f.name) or "").strip()
         if not raw:
             continue
-        default = getattr(cls(), f.name)
+        default = getattr(base, f.name)
         if isinstance(default, bool):
             overrides[f.name] = raw.lower() in ("1", "true", "yes", "on")
         elif isinstance(default, tuple):
             overrides[f.name] = tuple(float(part) for part in raw.split(","))
         else:
             overrides[f.name] = type(default)(raw)
-    return cls(**overrides)
+    return replace(base, **overrides)
+
+
+def _from_env(cls):
+    return _from_values(cls, lambda name: os.getenv(name.upper()))
+
+
+def _from_env_values(base, mapping):
+    lowered = {k.lower(): v for k, v in mapping.items()}
+    return _from_values(type(base), lowered.get, base)
 
 
 def load_settings():
