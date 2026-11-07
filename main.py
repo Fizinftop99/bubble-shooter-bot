@@ -7,7 +7,7 @@ def main():
     settings = load_settings()
     with GameBrowser(settings) as browser:
         browser.open_game()
-        GameLoop(browser).run()
+        GameLoop(browser, settings).run()
 
 
 if __name__ == "__main__":

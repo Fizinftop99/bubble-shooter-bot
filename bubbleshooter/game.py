@@ -3,20 +3,19 @@ from pathlib import Path
 
 from . import bot, strategy, vision
 
-SHOT_WAIT_S = 1.2
 RETRY_WAIT_S = 0.5
 LOW_BUBBLE_COUNT = 3
 LOW_COUNT_LIMIT = 4
 STALL_LIMIT = 8
 EMPTY_WAIT_LIMIT = 20
 ERROR_REOPEN_LIMIT = 3
-GAME_OVER_SHOT_DIR = Path("screens")
 
 
 class GameLoop:
-    def __init__(self, browser):
+    def __init__(self, browser, settings):
         self._browser = browser
-        self._aimer = bot.HumanAimer()
+        self._settings = settings
+        self._aimer = bot.HumanAimer(settings.pacing)
         self._shots = 0
         self._low_streak = 0
         self._stall_streak = 0
@@ -28,15 +27,22 @@ class GameLoop:
 
     def run(self):
         try:
-            while not self._finished():
+            while self._stop_reason() is None:
                 self._step()
         except KeyboardInterrupt:
             self._print_status("stopped by user", None)
             return
-        self._print_status("game over", self._save_final_screenshot())
+        self._print_status(self._stop_reason(), self._save_final_screenshot())
 
-    def _finished(self):
-        return self._low_streak >= LOW_COUNT_LIMIT or self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT
+    def _stop_reason(self):
+        run = self._settings.run
+        if self._low_streak >= LOW_COUNT_LIMIT or self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT:
+            return "game over"
+        if run.max_shots and self._shots >= run.max_shots:
+            return "shot limit reached"
+        if run.max_play_minutes and time.monotonic() - self._started >= run.max_play_minutes * 60:
+            return "time limit reached"
+        return None
 
     def _step(self):
         try:
@@ -48,7 +54,7 @@ class GameLoop:
         self._last_bbox = bbox
         shooter = vision.get_shooter_color(img)
         bubbles = vision.find_grid_bubbles(img)
-        result = strategy.choose_target(shooter, bubbles)
+        result = strategy.choose_target(shooter, bubbles, weights=self._settings.weights)
         if shooter is None or result is None:
             self._empty_streak += 1
             print(f"[wait] shooter={shooter} bubbles={len(bubbles)}")
@@ -56,13 +62,13 @@ class GameLoop:
             return
         self._empty_streak = 0
         self._track_stuck(shooter, bubbles)
-        if self._finished():
+        if self._stop_reason() is not None:
             return
         tx, ty, reason = result
         x, y = self._aimer.shoot(self._browser.page, bbox, (tx, ty))
         self._shots += 1
         print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
-        time.sleep(SHOT_WAIT_S)
+        time.sleep(self._settings.pacing.shot_wait_s)
 
     def _on_error(self, error):
         print(f"[error] frame grab failed: {str(error).splitlines()[0]}")
@@ -82,8 +88,9 @@ class GameLoop:
     def _save_final_screenshot(self):
         if self._last_bbox is None:
             return None
-        GAME_OVER_SHOT_DIR.mkdir(exist_ok=True)
-        path = GAME_OVER_SHOT_DIR / f"game_over_{time.strftime('%Y%m%d_%H%M%S')}.png"
+        shot_dir = Path(self._settings.run.screenshot_dir)
+        shot_dir.mkdir(exist_ok=True)
+        path = shot_dir / f"game_over_{time.strftime('%Y%m%d_%H%M%S')}.png"
         self._browser.save_screenshot(path, self._last_bbox)
         return path
 

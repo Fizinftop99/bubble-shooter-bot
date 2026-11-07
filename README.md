@@ -67,12 +67,14 @@ On Windows PowerShell: `Copy-Item .env.example .env`.
 
 ## Configuration
 
-`.env` supports:
+All settings are optional; anything missing from `.env` falls back to the defaults listed in `.env.example`.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `BROWSER_PATH` | `C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe` | Path to the browser executable |
-| `GAME_URL` | `https://www.bubbleshooter.com/` | Page that contains the game |
+| Group | Variables |
+| --- | --- |
+| Browser | `BROWSER_PATH`, `GAME_URL`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`, `CANVAS_TIMEOUT_MS` |
+| Pacing (how human the aiming looks) | `AIM_SPEED_PX_S`, `AIM_MIN_S`, `AIM_MAX_S`, `SHOT_WAIT_S`, `WAYPOINT_COUNT_WEIGHTS` |
+| Strategy weights | `DROP_WEIGHT`, `DEPTH_WEIGHT`, `MISS_BASE`, `FRIEND_WEIGHT`, `GROWTH_PENALTY` |
+| Run limits and output | `MAX_PLAY_MINUTES`, `MAX_SHOTS` (0 = unlimited), `SCREENSHOT_DIR` |
 
 The bot does not log in to the site.
 

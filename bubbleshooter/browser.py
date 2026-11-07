@@ -5,8 +5,6 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 GAME_FRAME_SELECTOR = "iframe[src*='bubbleshooter-game']"
-VIEWPORT = {"width": 1280, "height": 900}
-CANVAS_TIMEOUT_MS = 30_000
 SETTLE_WAIT_S = 1.2
 
 
@@ -20,8 +18,8 @@ class GameBrowser:
 
     def __enter__(self):
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=False, executable_path=self._settings.browser_path)
-        self.page = self._browser.new_page(viewport=VIEWPORT)
+        self._browser = self._playwright.chromium.launch(headless=False, executable_path=self._settings.browser.browser_path)
+        self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
         return self
 
     def __exit__(self, *exc):
@@ -36,13 +34,13 @@ class GameBrowser:
             self.page.close()
         except Exception:
             pass
-        self.page = self._browser.new_page(viewport=VIEWPORT)
+        self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
         self.open_game()
 
     def open_game(self):
-        self.page.goto(self._settings.game_url)
+        self.page.goto(self._settings.browser.game_url)
         self._canvas = self.page.frame_locator(GAME_FRAME_SELECTOR).locator("canvas")
-        self._canvas.wait_for(state="visible", timeout=CANVAS_TIMEOUT_MS)
+        self._canvas.wait_for(state="visible", timeout=self._settings.browser.canvas_timeout_ms)
         self._canvas.scroll_into_view_if_needed()
         time.sleep(SETTLE_WAIT_S)
 

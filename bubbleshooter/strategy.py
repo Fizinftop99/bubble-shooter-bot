@@ -1,6 +1,7 @@
 import math
 
 from . import layout
+from .config import StrategyWeights
 from .vision import colors_match
 
 CONTACT_DIST = 29
@@ -11,11 +12,6 @@ ANGLE_MIN_DEG = 8
 ANGLE_MAX_DEG = 172
 ANGLE_STEP_DEG = 0.5
 CLICK_DISTANCE = 250
-DROP_WEIGHT = 10.0
-DEPTH_WEIGHT = 0.15
-MISS_BASE = -3.0
-FRIEND_WEIGHT = 0.4
-GROWTH_PENALTY = 1.5
 WIDTH_BONUS = 0.05
 WIDTH_BONUS_CAP = 6
 
@@ -79,7 +75,7 @@ def _landing_cell(point, occupied, cells):
     return best if best and best[0] <= MAX_SNAP_DIST else None
 
 
-def _evaluate(cell, bubbles, shooter_color, max_row):
+def _evaluate(cell, bubbles, shooter_color, max_row, weights):
     cx, cy, row = cell
     placed = {"x": cx, "y": cy, "color": shooter_color, "row": row}
     everything = bubbles + [placed]
@@ -101,14 +97,14 @@ def _evaluate(cell, bubbles, shooter_color, max_row):
                     anchored.add(id(n))
                     frontier.append(n)
         dropped = len(rest) - len(anchored)
-        score = len(cluster) + DROP_WEIGHT * dropped + DEPTH_WEIGHT * row
+        score = len(cluster) + weights.drop_weight * dropped + weights.depth_weight * row
         return score, f"pop {len(cluster)} drop {dropped}"
     friends = len(cluster) - 1
-    score = MISS_BASE + FRIEND_WEIGHT * friends - GROWTH_PENALTY * max(0, row - max_row)
+    score = weights.miss_base + weights.friend_weight * friends - weights.growth_penalty * max(0, row - max_row)
     return score, f"no pop (joins {friends} same-colour)"
 
 
-def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS):
+def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
     if not bubbles:
         return None
     if shooter_color is not None:
@@ -127,7 +123,7 @@ def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS):
                 by_cell.setdefault(cell[1:], []).append(deg)
         best = None
         for cell, degs in by_cell.items():
-            score, why = _evaluate(cell, bubbles, shooter_color, max_row)
+            score, why = _evaluate(cell, bubbles, shooter_color, max_row, weights)
             score += min(len(degs), WIDTH_BONUS_CAP) * WIDTH_BONUS
             if best is None or score > best[0]:
                 best = (score, cell, degs, why)
