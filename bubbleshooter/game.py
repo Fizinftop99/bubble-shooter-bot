@@ -7,6 +7,7 @@ RETRY_WAIT_S = 0.5
 STALL_LIMIT = 8
 EMPTY_WAIT_LIMIT = 20
 ERROR_REOPEN_LIMIT = 3
+DIALOG_SETTLE_S = 1.0
 SETTLE_POLL_S = 0.04
 SETTLE_TIMEOUT_S = 3.0
 SETTLE_STABLE_FRAMES = 2
@@ -34,7 +35,10 @@ class GameLoop:
         except KeyboardInterrupt:
             self._print_status("stopped by user", None)
             return
-        self._print_status(self._stop_reason(), self._save_final_screenshot())
+        outcome = self._stop_reason()
+        if outcome == "game over":
+            outcome = self._classify_game_over()
+        self._print_status(outcome, self._save_final_screenshot())
 
     def _stop_reason(self):
         run = self._settings.run
@@ -85,6 +89,16 @@ class GameLoop:
             self._wait_settled(bubbles)
         else:
             time.sleep(self._settings.pacing.shot_wait_s)
+
+    def _classify_game_over(self):
+        time.sleep(DIALOG_SETTLE_S)
+        try:
+            img, _ = self._browser.grab_frame()
+        except Exception:
+            return "game over"
+        if vision.is_win(img):
+            return "game over: WON (board cleared, bonus awarded)"
+        return "game over: LOST (bubbles reached the bottom)"
 
     def _wait_settled(self, before):
         before_sig = self._board_signature(before)

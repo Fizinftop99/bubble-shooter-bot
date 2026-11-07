@@ -13,6 +13,9 @@ GAME_OVER_LINE_MIN_RG = 215
 GAME_OVER_LINE_MAX_RG = 245
 GAME_OVER_LINE_RG_DIFF = 6
 GAME_OVER_LINE_MIN_B = 245
+BONUS_ROW_Y = 218
+BONUS_ROW_X_RANGE = (300, 471)
+BONUS_DIGIT_MIN_PIXELS = 40
 
 
 def color_distance(a, b):
@@ -102,3 +105,12 @@ def is_game_over(img):
         if not GAME_OVER_LINE_MIN_RG <= r <= GAME_OVER_LINE_MAX_RG or abs(r - g) > GAME_OVER_LINE_RG_DIFF or b < GAME_OVER_LINE_MIN_B:
             return False
     return True
+
+
+def is_win(img):
+    digit_pixels = 0
+    for x in range(*BONUS_ROW_X_RANGE):
+        r, g, b = img.getpixel((x, BONUS_ROW_Y))
+        if r < 120 and g < 120 and b > 110:
+            digit_pixels += 1
+    return digit_pixels >= BONUS_DIGIT_MIN_PIXELS
