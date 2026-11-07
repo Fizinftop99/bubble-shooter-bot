@@ -5,6 +5,8 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
+from tqdm import tqdm
+
 from ..config import StrategyWeights
 from .runner import DEFAULT_MAX_SHOTS, run_job, summarize
 
@@ -16,12 +18,12 @@ def parse_overrides(text):
     return dict(part.strip().split("=", 1) for part in pairs)
 
 
-def run_variant(overrides, seeds, max_shots, workers):
+def run_variant(overrides, seeds, max_shots, workers, label="run"):
     jobs = [(overrides, seed, max_shots) for seed in seeds]
     if workers <= 1:
-        return [run_job(job) for job in jobs]
+        return [run_job(job) for job in tqdm(jobs, desc=label, unit="game")]
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(run_job, jobs, chunksize=1))
+        return list(tqdm(pool.map(run_job, jobs, chunksize=1), total=len(jobs), desc=label, unit="game"))
 
 
 def save_csv(name, results):
@@ -62,7 +64,7 @@ def main():
     all_results = {}
     for label, text in variants:
         started = time.time()
-        results = run_variant(parse_overrides(text), seeds, args.max_shots, args.workers)
+        results = run_variant(parse_overrides(text), seeds, args.max_shots, args.workers, f"{label} {text}".strip())
         all_results[label] = results
         print_summary(f"{label}: {text or 'defaults'}", results)
         print(f"  csv: {save_csv(label, results)}  ({time.time() - started:.0f}s)")
