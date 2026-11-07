@@ -1,3 +1,4 @@
+import base64
 import io
 import time
 
@@ -8,6 +9,7 @@ from . import adblock
 
 GAME_FRAME_SELECTOR = "iframe[src*='bubbleshooter-game']"
 SETTLE_WAIT_S = 1.2
+SCREENSHOT_FORMAT = "png"
 
 
 class GameBrowser:
@@ -17,6 +19,7 @@ class GameBrowser:
         self._context = None
         self.page = None
         self._canvas = None
+        self._cdp = None
 
     def __enter__(self):
         self._playwright = sync_playwright().start()
@@ -68,15 +71,25 @@ class GameBrowser:
         self._canvas = self.page.frame_locator(GAME_FRAME_SELECTOR).locator("canvas")
         self._canvas.wait_for(state="visible", timeout=self._settings.browser.canvas_timeout_ms)
         self._canvas.scroll_into_view_if_needed()
+        self._cdp = self._context.new_cdp_session(self.page)
         time.sleep(SETTLE_WAIT_S)
+
+    def _capture_page(self):
+        # fromSurface=False renders off-screen; the default capture makes the visible page flicker
+        reply = self._cdp.send("Page.captureScreenshot", {"format": SCREENSHOT_FORMAT, "fromSurface": False})
+        return Image.open(io.BytesIO(base64.b64decode(reply["data"]))).convert("RGB")
 
     def grab_frame(self):
         bbox = self._canvas.bounding_box()
-        png = self.page.screenshot(clip=bbox)
-        return Image.open(io.BytesIO(png)).convert("RGB"), bbox
+        page_image = self._capture_page()
+        scale = page_image.width / self.page.evaluate("window.innerWidth")
+        box = tuple(round(v * scale) for v in (bbox["x"], bbox["y"], bbox["x"] + bbox["width"], bbox["y"] + bbox["height"]))
+        size = (round(bbox["width"]), round(bbox["height"]))
+        return page_image.crop(box).resize(size, Image.LANCZOS), bbox
 
     def click_canvas(self, bbox, pos):
         self.page.mouse.click(bbox["x"] + pos[0], bbox["y"] + pos[1])
 
     def save_screenshot(self, path, bbox):
-        self.page.screenshot(path=str(path), clip=bbox)
+        image, _ = self.grab_frame()
+        image.save(path)
