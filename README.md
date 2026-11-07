@@ -98,6 +98,23 @@ Source: `https://cdn.bubbleshooter.com/games/bubbleshooter-game/game.min.js`.
 - **Win:** the board has no bubbles (checked once a second). The dialog shows bonus = score, total = 2 x score.
 - **After the dialog:** OK (or Restart) resets the score to 0 and builds a fresh 9-row board; the game then starts over.
 
+## Simulator (headless, for strategy experiments)
+
+`bubbleshooter/sim/` re-implements the game's rules (see above) without a browser, so strategies can be compared over many games in minutes. It feeds the real `strategy.choose_target` with the same data `vision` produces, so any strategy change is tested as-is.
+
+```bash
+uv run python -m bubbleshooter.sim --games 64 --workers 16
+uv run python -m bubbleshooter.sim --games 64 --set FRONT_WEIGHT=0,DROP_WEIGHT=5
+uv run python -m bubbleshooter.sim --games 64 --compare FRONT_WEIGHT=0 FRONT_WEIGHT=4
+uv run pytest
+```
+
+- `--set` / `--compare` take any `StrategyWeights` field (names as in `.env`). `--compare` runs both variants on the same seeds and prints how many games the second lasted longer.
+- Per-game CSVs go to `sim_results/` (git-ignored). Each seed is a reproducible game.
+- Speed: about 25 ms per shot per core (the strategy dominates); 16 games of ~800 shots take under a minute on 16 workers.
+- Calibration against real runs: pop rate 0.675 (real 0.65-0.72), a row pushed every 11.6 shots (real ~10-11), "predicted pop vs actual pop" mismatch 5.5% (real 5.6%).
+- Not modelled: animation timing and the exact order of the game's internal bubble array (only matters for ceiling hits next to a collision).
+
 ## Inspect what the bot sees
 
 Print the detected grid, shooter color and chosen shot for a saved canvas screenshot:
@@ -118,6 +135,8 @@ bubbleshooter/
   bot.py                 jittered click
   browser.py             browser launch, screenshots, clicks, page recovery
   game.py                game loop, game-over detection, status report
+  sim/                   headless game engine and batch runner
+tests/                   engine unit tests
 tools/inspect_frame.py   debugging helper
 ```
 
