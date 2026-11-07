@@ -35,8 +35,8 @@ class PacingSettings:
     aim_max_s: float = 1.0
     shot_wait_s: float = 1.2
     waypoint_count_weights: tuple = (0.3, 0.5, 0.2)
-    human_aim: bool = True
-    adaptive_wait: bool = False
+    human_aim: bool = False
+    adaptive_wait: bool = True
 
 
 @dataclass(frozen=True)
