@@ -4,6 +4,8 @@ import time
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+from . import adblock
+
 GAME_FRAME_SELECTOR = "iframe[src*='bubbleshooter-game']"
 SETTLE_WAIT_S = 1.2
 
@@ -13,14 +15,18 @@ class GameBrowser:
         self._settings = settings
         self._playwright = None
         self._browser = None
+        self._context = None
         self.page = None
         self._canvas = None
 
     def __enter__(self):
         self._playwright = sync_playwright().start()
+        self._launch()
+        return self
+
+    def _launch(self):
         self._browser = self._playwright.chromium.launch(headless=False, executable_path=self._settings.browser.browser_path)
         self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
-        return self
 
     def __exit__(self, *exc):
         for closer in (self._browser and self._browser.close, self._playwright and self._playwright.stop):
@@ -34,7 +40,10 @@ class GameBrowser:
             self.page.close()
         except Exception:
             pass
-        self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
+        try:
+            self.page = self._browser.new_page(viewport=self._settings.browser.viewport)
+        except Exception:
+            self._launch()
         self.open_game()
 
     def open_game(self):

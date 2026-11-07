@@ -65,7 +65,11 @@ class GameLoop:
         if self._stop_reason() is not None:
             return
         tx, ty, reason = result
-        x, y = self._aimer.shoot(self._browser.page, bbox, (tx, ty))
+        try:
+            x, y = self._aimer.shoot(self._browser.page, bbox, (tx, ty))
+        except Exception as e:
+            self._on_error(e)
+            return
         self._shots += 1
         print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
         time.sleep(self._settings.pacing.shot_wait_s)
@@ -76,7 +80,10 @@ class GameLoop:
         if self._error_streak >= ERROR_REOPEN_LIMIT:
             print("[recover] reopening page")
             self._error_streak = 0
-            self._browser.reopen()
+            try:
+                self._browser.reopen()
+            except Exception as e:
+                print(f"[error] reopen failed: {str(e).splitlines()[0]}")
         time.sleep(RETRY_WAIT_S)
 
     def _track_stuck(self, shooter, bubbles):

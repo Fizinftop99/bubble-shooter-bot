@@ -14,6 +14,7 @@ class BrowserSettings:
     viewport_width: int = 1280
     viewport_height: int = 900
     canvas_timeout_ms: int = 30_000
+    block_ads: bool = True
 
     @property
     def viewport(self):
@@ -60,7 +61,9 @@ def _from_env(cls):
         if not raw:
             continue
         default = getattr(cls(), f.name)
-        if isinstance(default, tuple):
+        if isinstance(default, bool):
+            overrides[f.name] = raw.lower() in ("1", "true", "yes", "on")
+        elif isinstance(default, tuple):
             overrides[f.name] = tuple(float(part) for part in raw.split(","))
         else:
             overrides[f.name] = type(default)(raw)
