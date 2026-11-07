@@ -17,6 +17,7 @@ class BrowserSettings:
     block_ads: bool = True
     user_data_dir: str = ".brave-profile"
     keep_open: bool = True
+    headless: bool = False
 
     @property
     def profile_path(self):

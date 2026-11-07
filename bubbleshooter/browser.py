@@ -1,6 +1,7 @@
 import base64
 import io
 import time
+from pathlib import Path
 
 from PIL import Image
 from playwright.sync_api import sync_playwright
@@ -32,8 +33,8 @@ class GameBrowser:
         cfg = self._settings.browser
         self._context = self._playwright.chromium.launch_persistent_context(
             str(cfg.profile_path),
-            headless=False,
-            executable_path=cfg.browser_path,
+            headless=cfg.headless,
+            executable_path=cfg.browser_path if Path(cfg.browser_path).exists() else None,
             viewport=cfg.viewport,
             args=[f"--window-size={cfg.viewport_width + WINDOW_MARGIN_PX[0]},{cfg.viewport_height + WINDOW_MARGIN_PX[1]}"],
             ignore_default_args=["--disable-extensions"],
