@@ -16,6 +16,7 @@ class BrowserSettings:
     canvas_timeout_ms: int = 30_000
     block_ads: bool = True
     user_data_dir: str = ".brave-profile"
+    keep_open: bool = True
 
     @property
     def profile_path(self):

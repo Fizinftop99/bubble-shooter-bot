@@ -71,7 +71,7 @@ All settings are optional; anything missing from `.env` falls back to the defaul
 
 | Group | Variables |
 | --- | --- |
-| Browser | `BROWSER_PATH`, `GAME_URL`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`, `CANVAS_TIMEOUT_MS`, `BLOCK_ADS`, `USER_DATA_DIR` |
+| Browser | `BROWSER_PATH`, `GAME_URL`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`, `CANVAS_TIMEOUT_MS`, `BLOCK_ADS`, `USER_DATA_DIR`, `KEEP_OPEN` |
 | Pacing (how human the aiming looks) | `AIM_SPEED_PX_S`, `AIM_MIN_S`, `AIM_MAX_S`, `SHOT_WAIT_S`, `WAYPOINT_COUNT_WEIGHTS`, `HUMAN_AIM`, `ADAPTIVE_WAIT` |
 | Strategy weights | `DROP_WEIGHT`, `DEPTH_WEIGHT`, `MISS_BASE`, `FRIEND_WEIGHT`, `GROWTH_PENALTY`, `PRESSURE_ROW`, `FRONT_WEIGHT`, `COLOR_WIPE_PENALTY`, `WIPE_FREE_BUBBLES` |
 | Run limits and output | `MAX_PLAY_MINUTES`, `MAX_SHOTS` (0 = unlimited), `SCREENSHOT_DIR` |
@@ -86,7 +86,7 @@ uv run python main.py
 
 A browser window opens and the bot starts shooting. Press `Ctrl+C` to stop.
 
-The bot also stops by itself at game over, then prints shots fired, play time and the path of the final screenshot (saved in `screens/`, which shows the score).
+The bot also stops by itself at game over (the browser window stays open until you close it; set `KEEP_OPEN=false` to close it automatically), then prints shots fired, play time and the path of the final screenshot (saved in `screens/`, which shows the score).
 
 ## Game rules (read from the game's script)
 
