@@ -6,6 +6,7 @@ COLOR_TOLERANCE = 40
 SAMPLE_RING_RADIUS = 8
 SAMPLE_RING_POINTS = 8
 BUBBLE_MAX_MIN_CHANNEL = 160
+SOLID_RING_MIN_HITS = 7
 GAME_OVER_LINE_Y = 240
 GAME_OVER_LINE_XS = (230, 300, 360, 430, 460)
 GAME_OVER_LINE_MIN_RG = 215
@@ -46,6 +47,18 @@ def get_shooter_color(img):
     return color if is_bubble_color(color) else None
 
 
+def _is_solid_bubble(img, cx, cy):
+    w, h = img.size
+    hits = 0
+    for i in range(SAMPLE_RING_POINTS):
+        a = 2 * math.pi * i / SAMPLE_RING_POINTS
+        x = round(cx + SAMPLE_RING_RADIUS * math.cos(a))
+        y = round(cy + SAMPLE_RING_RADIUS * math.sin(a))
+        if 0 <= x < w and 0 <= y < h and is_bubble_color(img.getpixel((x, y))[:3]):
+            hits += 1
+    return hits >= SOLID_RING_MIN_HITS
+
+
 def _row_is_shifted(img, y, prev_shifted):
     left = img.getpixel((layout.FIELD_LEFT_X + 6, y))[:3]
     right = img.getpixel((layout.FIELD_RIGHT_X - 6, y))[:3]
@@ -53,6 +66,15 @@ def _row_is_shifted(img, y, prev_shifted):
         return False
     if is_bubble_color(right):
         return True
+    solid = {
+        shifted: sum(
+            _is_solid_bubble(img, layout.COL0_X + (layout.ODD_ROW_SHIFT if shifted else 0) + col * layout.COL_PITCH, y)
+            for col in range(layout.COLS)
+        )
+        for shifted in (False, True)
+    }
+    if solid[False] != solid[True]:
+        return solid[True] > solid[False]
     return not prev_shifted
 
 

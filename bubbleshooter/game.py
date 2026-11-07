@@ -4,8 +4,6 @@ from pathlib import Path
 from . import bot, strategy, vision
 
 RETRY_WAIT_S = 0.5
-LOW_BUBBLE_COUNT = 3
-LOW_COUNT_LIMIT = 4
 STALL_LIMIT = 8
 EMPTY_WAIT_LIMIT = 20
 ERROR_REOPEN_LIMIT = 3
@@ -20,7 +18,6 @@ class GameLoop:
         self._settings = settings
         self._aimer = bot.HumanAimer(settings.pacing)
         self._shots = 0
-        self._low_streak = 0
         self._stall_streak = 0
         self._empty_streak = 0
         self._error_streak = 0
@@ -43,8 +40,10 @@ class GameLoop:
         run = self._settings.run
         if self._window_closed:
             return "browser window closed"
-        if self._game_over or self._low_streak >= LOW_COUNT_LIMIT or self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT:
+        if self._game_over:
             return "game over"
+        if self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT:
+            return "stuck: board not recognised (the game may be over or won)"
         if run.max_shots and self._shots >= run.max_shots:
             return "shot limit reached"
         if run.max_play_minutes and time.monotonic() - self._started >= run.max_play_minutes * 60:
@@ -126,7 +125,6 @@ class GameLoop:
         time.sleep(RETRY_WAIT_S)
 
     def _track_stuck(self, shooter, bubbles):
-        self._low_streak = self._low_streak + 1 if len(bubbles) <= LOW_BUBBLE_COUNT else 0
         sig = (len(bubbles), shooter, tuple((b["x"], b["y"]) for b in bubbles[:5]))
         self._stall_streak = self._stall_streak + 1 if sig == self._last_sig else 0
         self._last_sig = sig
