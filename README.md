@@ -145,3 +145,7 @@ tools/inspect_frame.py   debugging helper
 - The pixel coordinates in `layout.py` are calibrated to this game's 750x562 canvas.
 - The page can crash after several minutes; the bot reopens it, which starts a new game.
 - Playwright's bundled Chromium failed to start on the development machine, which is why the bot launches an installed browser via `BROWSER_PATH`.
+
+### Fast strategy (numba)
+
+`bubbleshooter/strategy_fast.py` is a numba-compiled copy of `strategy.choose_target` (about 1 ms instead of 30 ms per shot). `strategy.py` stays as the readable reference; `tests/test_strategy_fast.py` checks that both choose exactly the same shot on hundreds of simulated positions. The bot and the simulator use the fast version; the first call compiles (cached in `__pycache__`).

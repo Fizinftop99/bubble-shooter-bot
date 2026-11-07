@@ -2,7 +2,7 @@ import re
 import statistics
 from dataclasses import dataclass, replace
 
-from .. import strategy
+from .. import strategy_fast as strategy
 from ..config import StrategyWeights, _from_env_values
 from .engine import SimGame
 

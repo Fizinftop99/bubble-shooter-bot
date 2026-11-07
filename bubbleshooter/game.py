@@ -1,7 +1,8 @@
 import time
 from pathlib import Path
 
-from . import bot, strategy, vision
+from . import bot, vision
+from . import strategy_fast as strategy
 
 RETRY_WAIT_S = 0.5
 STALL_LIMIT = 8

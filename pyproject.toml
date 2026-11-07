@@ -3,6 +3,7 @@ name = "bubbleshooter"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "numba>=0.68.1",
     "pillow>=13.0.0",
     "playwright>=1.64.1",
     "python-dotenv>=1.2.4",
