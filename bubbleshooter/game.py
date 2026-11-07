@@ -16,6 +16,7 @@ GAME_OVER_SHOT_DIR = Path("screens")
 class GameLoop:
     def __init__(self, browser):
         self._browser = browser
+        self._aimer = bot.HumanAimer()
         self._shots = 0
         self._low_streak = 0
         self._stall_streak = 0
@@ -58,7 +59,7 @@ class GameLoop:
         if self._finished():
             return
         tx, ty, reason = result
-        x, y = bot.shoot(self._browser.page, bbox, (tx, ty))
+        x, y = self._aimer.shoot(self._browser.page, bbox, (tx, ty))
         self._shots += 1
         print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
         time.sleep(SHOT_WAIT_S)
