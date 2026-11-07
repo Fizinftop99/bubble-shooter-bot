@@ -5,6 +5,8 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from tqdm import tqdm
+
 from .. import bot
 from ..config import StrategyWeights, load_settings
 from ..decider import ModelDecider
@@ -18,12 +20,12 @@ def parse_overrides(text):
     return dict(part.strip().split("=", 1) for part in pairs)
 
 
-def run_variant(overrides, seeds, max_shots, workers, decider_settings=None, jitter=bot.JITTER_PX, click_area=True):
+def run_variant(overrides, seeds, max_shots, workers, decider_settings=None, jitter=bot.JITTER_PX, click_area=True, label="run"):
     jobs = [(overrides, seed, max_shots, decider_settings, jitter, click_area) for seed in seeds]
     if workers <= 1:
-        return [run_job(job) for job in jobs]
+        return [run_job(job) for job in tqdm(jobs, desc=label, unit="game")]
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(run_job, jobs, chunksize=1))
+        return list(tqdm(pool.map(run_job, jobs, chunksize=1), total=len(jobs), desc=label, unit="game"))
 
 
 def save_csv(name, results):
@@ -77,7 +79,10 @@ def main():
     all_results = {}
     for label, text in variants:
         started = time.time()
-        results = run_variant(parse_overrides(text), seeds, args.max_shots, workers, decider_settings, args.jitter, not args.any_click)
+        results = run_variant(
+            parse_overrides(text), seeds, args.max_shots, workers, decider_settings, args.jitter, not args.any_click,
+            label=f"{label} {text}".strip(),
+        )
         all_results[label] = results
         print_summary(f"{label}: {text or 'defaults'}{' [model decider]' if decider_settings else ''}", results)
         print(f"  csv: {save_csv(label, results)}  ({time.time() - started:.0f}s)")
