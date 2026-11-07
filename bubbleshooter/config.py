@@ -43,6 +43,8 @@ class StrategyWeights:
     miss_base: float = -3.0
     friend_weight: float = 0.4
     growth_penalty: float = 1.5
+    pressure_row: int = 8
+    front_weight: float = 4.0
 
 
 @dataclass(frozen=True)

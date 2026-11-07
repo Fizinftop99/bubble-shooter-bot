@@ -24,6 +24,7 @@ class GameLoop:
         self._last_sig = None
         self._last_bbox = None
         self._window_closed = False
+        self._game_over = False
         self._started = time.monotonic()
 
     def run(self):
@@ -39,7 +40,7 @@ class GameLoop:
         run = self._settings.run
         if self._window_closed:
             return "browser window closed"
-        if self._low_streak >= LOW_COUNT_LIMIT or self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT:
+        if self._game_over or self._low_streak >= LOW_COUNT_LIMIT or self._stall_streak >= STALL_LIMIT or self._empty_streak >= EMPTY_WAIT_LIMIT:
             return "game over"
         if run.max_shots and self._shots >= run.max_shots:
             return "shot limit reached"
@@ -55,6 +56,9 @@ class GameLoop:
             return
         self._error_streak = 0
         self._last_bbox = bbox
+        if vision.is_game_over(img):
+            self._game_over = True
+            return
         shooter = vision.get_shooter_color(img)
         bubbles = vision.find_grid_bubbles(img)
         result = strategy.choose_target(shooter, bubbles, weights=self._settings.weights)
@@ -74,7 +78,7 @@ class GameLoop:
             self._on_error(e)
             return
         self._shots += 1
-        print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
+        print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} rows={max(b['row'] for b in bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
         time.sleep(self._settings.pacing.shot_wait_s)
 
     def _on_error(self, error):

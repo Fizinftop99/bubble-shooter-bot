@@ -98,9 +98,14 @@ def _evaluate(cell, bubbles, shooter_color, max_row, weights):
                     frontier.append(n)
         dropped = len(rest) - len(anchored)
         score = len(cluster) + weights.drop_weight * dropped + weights.depth_weight * row
+        if max_row >= weights.pressure_row:
+            new_max_row = max((b["row"] for b in rest if id(b) in anchored), default=0)
+            score += weights.front_weight * (max_row - new_max_row)
         return score, f"pop {len(cluster)} drop {dropped}"
     friends = len(cluster) - 1
-    score = weights.miss_base + weights.friend_weight * friends - weights.growth_penalty * max(0, row - max_row)
+    growth = max(0, row - max_row)
+    penalty = weights.growth_penalty + (weights.front_weight if max_row >= weights.pressure_row else 0)
+    score = weights.miss_base + weights.friend_weight * friends - penalty * growth
     return score, f"no pop (joins {friends} same-colour)"
 
 

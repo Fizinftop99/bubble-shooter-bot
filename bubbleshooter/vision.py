@@ -6,6 +6,12 @@ COLOR_TOLERANCE = 40
 SAMPLE_RING_RADIUS = 8
 SAMPLE_RING_POINTS = 8
 BUBBLE_MAX_MIN_CHANNEL = 160
+GAME_OVER_LINE_Y = 240
+GAME_OVER_LINE_XS = (230, 300, 360, 430, 460)
+GAME_OVER_LINE_MIN_RG = 215
+GAME_OVER_LINE_MAX_RG = 245
+GAME_OVER_LINE_RG_DIFF = 6
+GAME_OVER_LINE_MIN_B = 245
 
 
 def color_distance(a, b):
@@ -66,3 +72,11 @@ def find_grid_bubbles(img):
         row += 1
         y += layout.ROW_PITCH
     return bubbles
+
+
+def is_game_over(img):
+    for x in GAME_OVER_LINE_XS:
+        r, g, b = img.getpixel((x, GAME_OVER_LINE_Y))
+        if not GAME_OVER_LINE_MIN_RG <= r <= GAME_OVER_LINE_MAX_RG or abs(r - g) > GAME_OVER_LINE_RG_DIFF or b < GAME_OVER_LINE_MIN_B:
+            return False
+    return True
