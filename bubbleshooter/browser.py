@@ -9,6 +9,7 @@ from . import adblock
 
 GAME_FRAME_SELECTOR = "iframe[src*='bubbleshooter-game']"
 SETTLE_WAIT_S = 1.2
+CLOSE_POLL_S = 0.5
 SCREENSHOT_FORMAT = "png"
 WINDOW_MARGIN_PX = (20, 140)
 
@@ -56,6 +57,10 @@ class GameBrowser:
             return not self.page.is_closed()
         except Exception:
             return False
+
+    def wait_until_closed(self):
+        while self.is_open():
+            time.sleep(CLOSE_POLL_S)
 
     def reopen(self):
         try:
