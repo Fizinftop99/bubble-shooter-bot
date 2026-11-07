@@ -47,8 +47,8 @@ class StrategyWeights:
     friend_weight: float = 0.4
     growth_penalty: float = 1.5
     pressure_row: int = 8
-    front_weight: float = 4.0
-    color_wipe_penalty: float = 30.0
+    front_weight: float = 0.0
+    color_wipe_penalty: float = 40.0
     wipe_free_bubbles: int = 15
 
 
