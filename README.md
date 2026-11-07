@@ -88,6 +88,16 @@ A browser window opens and the bot starts shooting. Press `Ctrl+C` to stop.
 
 The bot also stops by itself at game over, then prints shots fired, play time and the path of the final screenshot (saved in `screens/`, which shows the score).
 
+## Game rules (read from the game's script)
+
+Source: `https://cdn.bubbleshooter.com/games/bubbleshooter-game/game.min.js`.
+
+- **Pushes are driven by misses.** A shot that pops fewer than 3 bubbles costs one "life" (the silver balls). Pops do not restore lives. With no lives left, the next miss pushes new rows. After each push the life allowance shrinks: 5, 4, 3, 2, 1, then resets to (colours on the board - 1), so pushes come after 6, 5, 4, 3, 2 misses and the cycle repeats.
+- **Rows per push = 1 + number of colours that are no longer on the board.** Wiping out a colour makes every later push bigger (2, 3, 4, 5 rows) and the life cycle shorter. New shooter colours are only drawn from colours still on the board.
+- **Loss:** a bubble in row 15 or lower (below y = 470) ends the game.
+- **Win:** the board has no bubbles (checked once a second). The dialog shows bonus = score, total = 2 x score.
+- **After the dialog:** OK (or Restart) resets the score to 0 and builds a fresh 9-row board; the game then starts over.
+
 ## Inspect what the bot sees
 
 Print the detected grid, shooter color and chosen shot for a saved canvas screenshot:
