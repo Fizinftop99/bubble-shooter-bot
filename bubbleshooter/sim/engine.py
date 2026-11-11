@@ -1,6 +1,9 @@
 import math
 import random
 
+import numpy as np
+from numba import njit
+
 from .. import layout
 
 BOARD_WIDTH = 17
@@ -31,6 +34,9 @@ POP_SCORE_UNIT = 10
 POP_SCORE_GROUP = 3
 HANG_SCORE = 100
 SCREEN_SCALE = 749 / 800
+EMPTY = -1
+KEPT, POPPED, HUNG = 0, 1, 2
+GRID_MIN_ROWS = 24
 
 PALETTE = (
     (0, 188, 31),
@@ -42,20 +48,122 @@ PALETTE = (
 )
 
 
+@njit(cache=True)
 def _js_round(value):
-    return math.floor(value + 0.5)
+    return int(math.floor(value + 0.5))
 
 
-def _cell_center(bx, by):
-    return ORIGIN_X + bx * BUBBLE_SIZE + (by % 2) * ROW_SHIFT, ORIGIN_Y + by * BUBBLE_SIZE
+@njit(cache=True)
+def _snap_cell(grid, x, y, vx, vy):
+    base_x, base_y = x - ARRIVAL_OFFSET * vx, y - ARRIVAL_OFFSET * vy
+    counter = 0
+    while True:
+        px = base_x - SNAP_BACKOFF * counter * vx - ORIGIN_X
+        py = base_y - SNAP_BACKOFF * counter * vy - ORIGIN_Y
+        counter += 1
+        by = max(0, _js_round(py / BUBBLE_SIZE))
+        px -= (by % 2) * ROW_SHIFT
+        bx = _js_round(px * SNAP_X_FUDGE / BUBBLE_SIZE)
+        bx = min(BOARD_WIDTH - 1, max(0, bx))
+        if by >= grid.shape[0] or grid[by, bx] == EMPTY:
+            return bx, by
 
 
-def _neighbors(bx, by):
-    cells = [(bx - 1, by), (bx + 1, by)]
-    side = (bx, bx - 1) if by % 2 == 0 else (bx, bx + 1)
-    for ny in (by - 1, by + 1):
-        cells.extend((nx, ny) for nx in side)
-    return [(x, y) for x, y in cells if 0 <= x < BOARD_WIDTH and y >= 0]
+@njit(cache=True)
+def _fly_cell(grid, vx, vy):
+    x, y = float(SHOOTER_X), float(SHOOTER_Y)
+    last_row = -1
+    for by in range(grid.shape[0]):
+        for bx in range(BOARD_WIDTH):
+            if grid[by, bx] != EMPTY:
+                last_row = by
+                break
+    for _ in range(MAX_FLIGHT_FRAMES):
+        x += vx
+        y += vy
+        if x > WALL_RIGHT:
+            vx, x = -vx, float(WALL_RIGHT)
+        elif x < WALL_LEFT:
+            vx, x = -vx, float(WALL_LEFT)
+        ahead_x, ahead_y = x + vx, y + vy
+        if ahead_y < CEILING_Y:
+            return _snap_cell(grid, ahead_x, CEILING_SNAP_Y, vx, vy)
+        for by in range(last_row + 1):
+            cy = ORIGIN_Y + by * BUBBLE_SIZE
+            if abs(ahead_y - cy) >= COLLISION_DIST:
+                continue
+            for bx in range(BOARD_WIDTH):
+                if grid[by, bx] == EMPTY:
+                    continue
+                cx = ORIGIN_X + bx * BUBBLE_SIZE + (by % 2) * ROW_SHIFT
+                if math.hypot(ahead_x - cx, ahead_y - cy) < COLLISION_DIST:
+                    return _snap_cell(grid, ahead_x - STEP_BACK * vx, ahead_y - STEP_BACK * vy, vx, vy)
+    return -1, -1
+
+
+@njit(cache=True)
+def _neighbor_cells(bx, by, rows):
+    out = np.empty((6, 2), dtype=np.int64)
+    count = 0
+    side = bx - 1 if by % 2 == 0 else bx + 1
+    for nx, ny in ((bx - 1, by), (bx + 1, by), (bx, by - 1), (side, by - 1), (bx, by + 1), (side, by + 1)):
+        if 0 <= nx < BOARD_WIDTH and 0 <= ny < rows:
+            out[count, 0] = nx
+            out[count, 1] = ny
+            count += 1
+    return out, count
+
+
+@njit(cache=True)
+def _mark_hanging(grid, removed):
+    rows = grid.shape[0]
+    anchored = np.zeros(grid.shape, dtype=np.bool_)
+    stack = np.empty((rows * BOARD_WIDTH, 2), dtype=np.int64)
+    top = 0
+    for bx in range(BOARD_WIDTH):
+        if grid[0, bx] != EMPTY and removed[0, bx] == KEPT:
+            anchored[0, bx] = True
+            stack[top, 0], stack[top, 1] = bx, 0
+            top += 1
+    while top > 0:
+        top -= 1
+        cells, count = _neighbor_cells(stack[top, 0], stack[top, 1], rows)
+        for k in range(count):
+            nx, ny = cells[k, 0], cells[k, 1]
+            if grid[ny, nx] != EMPTY and removed[ny, nx] == KEPT and not anchored[ny, nx]:
+                anchored[ny, nx] = True
+                stack[top, 0], stack[top, 1] = nx, ny
+                top += 1
+    hanging = 0
+    for by in range(rows):
+        for bx in range(BOARD_WIDTH):
+            if grid[by, bx] != EMPTY and removed[by, bx] == KEPT and not anchored[by, bx]:
+                removed[by, bx] = HUNG
+                hanging += 1
+    return hanging
+
+
+@njit(cache=True)
+def _resolve_cells(grid, bx, by, color):
+    rows = grid.shape[0]
+    removed = np.zeros(grid.shape, dtype=np.int8)
+    stack = np.empty((rows * BOARD_WIDTH, 2), dtype=np.int64)
+    removed[by, bx] = POPPED
+    stack[0, 0], stack[0, 1] = bx, by
+    top, size = 1, 1
+    while top > 0:
+        top -= 1
+        cells, count = _neighbor_cells(stack[top, 0], stack[top, 1], rows)
+        for k in range(count):
+            nx, ny = cells[k, 0], cells[k, 1]
+            if grid[ny, nx] == color and removed[ny, nx] == KEPT:
+                removed[ny, nx] = POPPED
+                stack[top, 0], stack[top, 1] = nx, ny
+                top += 1
+                size += 1
+    if size < MIN_POP:
+        return removed, size, 0
+    return removed, size, _mark_hanging(grid, removed)
 
 
 class SimGame:
@@ -144,72 +252,39 @@ class SimGame:
         rad = math.radians(angle + 90)
         return -LAUNCH_SPEED * math.cos(rad), -LAUNCH_SPEED * math.sin(rad)
 
+    def _grid(self):
+        rows = max(GRID_MIN_ROWS, max((by for _, by in self.board), default=0) + 2)
+        grid = np.full((rows, BOARD_WIDTH), EMPTY, dtype=np.int8)
+        for (bx, by), color in self.board.items():
+            grid[by, bx] = color
+        return grid
+
     def _fly(self, vx, vy):
-        x, y = SHOOTER_X, SHOOTER_Y
-        centers = [(_cell_center(*cell), cell) for cell in self.board]
-        for _ in range(MAX_FLIGHT_FRAMES):
-            x += vx
-            y += vy
-            if x > WALL_RIGHT:
-                vx, x = -vx, WALL_RIGHT
-            elif x < WALL_LEFT:
-                vx, x = -vx, WALL_LEFT
-            ahead_x, ahead_y = x + vx, y + vy
-            if ahead_y < CEILING_Y:
-                return self._snap(ahead_x, CEILING_SNAP_Y, vx, vy)
-            for (cx, cy), _ in centers:
-                if math.hypot(ahead_x - cx, ahead_y - cy) < COLLISION_DIST:
-                    return self._snap(ahead_x - STEP_BACK * vx, ahead_y - STEP_BACK * vy, vx, vy)
-        raise RuntimeError("shot never landed")
+        bx, by = _fly_cell(self._grid(), float(vx), float(vy))
+        if bx < 0:
+            raise RuntimeError("shot never landed")
+        return int(bx), int(by)
 
-    def _snap(self, x, y, vx, vy):
-        base_x, base_y = x - ARRIVAL_OFFSET * vx, y - ARRIVAL_OFFSET * vy
-        counter = 0
-        while True:
-            px = base_x - SNAP_BACKOFF * counter * vx - ORIGIN_X
-            py = base_y - SNAP_BACKOFF * counter * vy - ORIGIN_Y
-            counter += 1
-            by = max(0, _js_round(py / BUBBLE_SIZE))
-            px -= (by % 2) * ROW_SHIFT
-            bx = _js_round(px * SNAP_X_FUDGE / BUBBLE_SIZE)
-            bx = min(BOARD_WIDTH - 1, max(0, bx))
-            if (bx, by) not in self.board:
-                return bx, by
-
-    def _cluster(self, cell, color):
-        seen, frontier = {cell}, [cell]
-        while frontier:
-            cur = frontier.pop()
-            for n in _neighbors(*cur):
-                if n not in seen and self.board.get(n) == color:
-                    seen.add(n)
-                    frontier.append(n)
-        return seen
+    def _remove(self, removed):
+        self.board = {cell: color for cell, color in self.board.items() if removed[cell[1], cell[0]] == KEPT}
 
     def _resolve_landing(self, cell, color):
-        cluster = self._cluster(cell, color)
-        if len(cluster) < MIN_POP:
+        removed, size, hanging = _resolve_cells(self._grid(), cell[0], cell[1], color)
+        if size < MIN_POP:
             return False
-        for k in range(1, len(cluster) + 1):
+        for k in range(1, size + 1):
             self.score += POP_SCORE_UNIT * math.ceil(k / POP_SCORE_GROUP)
-        for c in cluster:
-            del self.board[c]
-        self.score += HANG_SCORE * self._drop_hanging()
+        self._remove(removed)
+        self.score += HANG_SCORE * int(hanging)
         return True
 
     def _drop_hanging(self):
-        anchored = {c for c in self.board if c[1] == 0}
-        frontier = list(anchored)
-        while frontier:
-            cur = frontier.pop()
-            for n in _neighbors(*cur):
-                if n in self.board and n not in anchored:
-                    anchored.add(n)
-                    frontier.append(n)
-        hanging = [c for c in self.board if c not in anchored]
-        for c in hanging:
-            del self.board[c]
-        return len(hanging)
+        grid = self._grid()
+        removed = np.zeros(grid.shape, dtype=np.int8)
+        hanging = int(_mark_hanging(grid, removed))
+        if hanging:
+            self._remove(removed)
+        return hanging
 
     def _lose_life(self):
         if self.lives > 0:

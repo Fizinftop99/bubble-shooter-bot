@@ -122,3 +122,22 @@ def test_new_shooter_colours_come_from_the_board():
     for _ in range(20):
         game._promote()
         assert game.queue == 2
+
+
+GOLDEN_RANDOM_GAMES = {
+    0: (25, 290, 4, 221),
+    1: (17, 30, 3, 217),
+    2: (19, 30, 4, 235),
+}
+
+
+def test_compiled_engine_reproduces_reference_games():
+    import random
+
+    for seed, expected in GOLDEN_RANDOM_GAMES.items():
+        game = SimGame(seed)
+        rng = random.Random(seed * 7919)
+        while not game.is_over and game.shots < 400:
+            game.shoot(click_for_angle(rng.uniform(5, 175)))
+        assert (game.shots, game.score, game.pushes, len(game.board)) == expected
+        assert game.lost and not game.won

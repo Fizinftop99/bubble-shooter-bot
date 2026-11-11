@@ -1,4 +1,5 @@
 import math
+from functools import lru_cache
 
 import numpy as np
 from numba import njit
@@ -16,13 +17,15 @@ from .strategy import (
     MIN_POP,
     WIDTH_BONUS,
     WIDTH_BONUS_CAP,
-    _colour_labels,
     _lattice,
 )
 from .vision import colors_match
 
 RAY_EPS = 1e-9
 NO_CELL = -1
+MAX_NEIGHBORS = 8
+DEGS = [ANGLE_MIN_DEG + i * ANGLE_STEP_DEG for i in range(int((ANGLE_MAX_DEG - ANGLE_MIN_DEG) / ANGLE_STEP_DEG) + 1)]
+ANGLES = np.array([math.radians(d) for d in DEGS], dtype=np.float64)
 
 
 @njit(cache=True)
@@ -68,7 +71,8 @@ def _landing_cells(xs, ys, cell_x, cell_y, free, ox, oy, angles):
             continue
         best_d, best_i = math.inf, NO_CELL
         for c in range(cell_x.shape[0]):
-            if not free[c]:
+            # a cell further than MAX_SNAP_DIST on either axis can never be accepted below
+            if not free[c] or abs(cell_y[c] - qy) > MAX_SNAP_DIST or abs(cell_x[c] - qx) > MAX_SNAP_DIST:
                 continue
             d = math.hypot(cell_x[c] - qx, cell_y[c] - qy)
             if best_i == NO_CELL or d < best_d:
@@ -81,16 +85,22 @@ def _landing_cells(xs, ys, cell_x, cell_y, free, ox, oy, angles):
 @njit(cache=True)
 def _adjacency(xs, ys):
     n = xs.shape[0]
-    adj = np.zeros((n, n), dtype=np.bool_)
+    nbr = np.empty((n, MAX_NEIGHBORS), dtype=np.int64)
+    cnt = np.zeros(n, dtype=np.int64)
     for i in range(n):
-        for j in range(n):
-            if i != j and math.hypot(xs[j] - xs[i], ys[j] - ys[i]) <= layout.NEIGHBOR_DIST:
-                adj[i, j] = True
-    return adj
+        for j in range(i + 1, n):
+            if abs(ys[j] - ys[i]) > layout.NEIGHBOR_DIST or abs(xs[j] - xs[i]) > layout.NEIGHBOR_DIST:
+                continue
+            if math.hypot(xs[j] - xs[i], ys[j] - ys[i]) <= layout.NEIGHBOR_DIST and cnt[i] < MAX_NEIGHBORS and cnt[j] < MAX_NEIGHBORS:
+                nbr[i, cnt[i]] = j
+                cnt[i] += 1
+                nbr[j, cnt[j]] = i
+                cnt[j] += 1
+    return nbr, cnt
 
 
 @njit(cache=True)
-def _evaluate(cx, cy, row, xs, ys, rows, same, labels, adj, max_row,
+def _evaluate(cx, cy, row, xs, ys, rows, same, labels, nbr, cnt, max_row,
               drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
               pressure_row, front_weight, wipe_penalty, wipe_free):
     n = xs.shape[0]
@@ -107,8 +117,9 @@ def _evaluate(cx, cy, row, xs, ys, rows, same, labels, adj, max_row,
     while top > 0:
         top -= 1
         cur = stack[top]
-        for j in range(n):
-            if adj[cur, j] and same[j] and not in_cluster[j]:
+        for m in range(cnt[cur]):
+            j = nbr[cur, m]
+            if same[j] and not in_cluster[j]:
                 in_cluster[j] = True
                 stack[top] = j
                 top += 1
@@ -125,8 +136,9 @@ def _evaluate(cx, cy, row, xs, ys, rows, same, labels, adj, max_row,
         while top > 0:
             top -= 1
             cur = stack[top]
-            for j in range(n):
-                if adj[cur, j] and not in_cluster[j] and not anchored[j]:
+            for m in range(cnt[cur]):
+                j = nbr[cur, m]
+                if not in_cluster[j] and not anchored[j]:
                     anchored[j] = True
                     stack[top] = j
                     top += 1
@@ -163,47 +175,117 @@ def _evaluate(cx, cy, row, xs, ys, rows, same, labels, adj, max_row,
     return miss_base + friend_weight * friends - penalty * growth, size, 0
 
 
+@njit(cache=True)
+def _choose(xs, ys, rows, same, labels, cell_x, cell_y, cell_row, angles, ox, oy,
+            drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
+            pressure_row, front_weight, wipe_penalty, wipe_free):
+    n = xs.shape[0]
+    n_cells = cell_x.shape[0]
+    free = np.ones(n_cells, dtype=np.bool_)
+    max_row = 0
+    for i in range(n):
+        if rows[i] > max_row:
+            max_row = rows[i]
+        for c in range(n_cells):
+            if cell_x[c] == xs[i] and cell_y[c] == ys[i]:
+                free[c] = False
+                break
+    landing = _landing_cells(xs, ys, cell_x, cell_y, free, ox, oy, angles)
+    counts = np.zeros(n_cells, dtype=np.int64)
+    order = np.empty(n_cells, dtype=np.int64)
+    n_order = 0
+    for k in range(landing.shape[0]):
+        c = landing[k]
+        if c != NO_CELL:
+            if counts[c] == 0:
+                order[n_order] = c
+                n_order += 1
+            counts[c] += 1
+    nbr, cnt = _adjacency(xs, ys)
+    best_c, best_score, best_size, best_dropped = NO_CELL, 0.0, 0, 0
+    for o in range(n_order):
+        c = order[o]
+        score, size, dropped = _evaluate(
+            cell_x[c], cell_y[c], cell_row[c], xs, ys, rows, same, labels, nbr, cnt, max_row,
+            drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
+            pressure_row, front_weight, wipe_penalty, wipe_free,
+        )
+        score += min(counts[c], WIDTH_BONUS_CAP) * WIDTH_BONUS
+        if best_c == NO_CELL or score > best_score:
+            best_c, best_score, best_size, best_dropped = c, score, size, dropped
+    mid_k = NO_CELL
+    if best_c != NO_CELL:
+        target, seen = counts[best_c] // 2, 0
+        for k in range(landing.shape[0]):
+            if landing[k] == best_c:
+                if seen == target:
+                    mid_k = k
+                    break
+                seen += 1
+    return best_c, mid_k, best_size, best_dropped
+
+
+@lru_cache(maxsize=None)
+def _lattice_arrays(top_shift):
+    cells = _lattice([{"shifted": top_shift, "row": 0}])
+    return (
+        np.array([c[0] for c in cells], dtype=np.float64),
+        np.array([c[1] for c in cells], dtype=np.float64),
+        np.array([c[2] for c in cells], dtype=np.int64),
+    )
+
+
+@lru_cache(maxsize=65536)
+def _match(a, b):
+    return colors_match(a, b)
+
+
+def _bubble_arrays(shooter_color, bubbles):
+    xs, ys, rows, same, labels = [], [], [], [], []
+    reps, label_of, same_of = [], {}, {}
+    for b in bubbles:
+        color = b["color"]
+        label = label_of.get(color)
+        if label is None:
+            for i, rep in enumerate(reps):
+                if _match(color, rep):
+                    label = i
+                    break
+            else:
+                reps.append(color)
+                label = len(reps) - 1
+            label_of[color] = label
+            same_of[color] = _match(color, shooter_color)
+        xs.append(b["x"])
+        ys.append(b["y"])
+        rows.append(b["row"])
+        same.append(same_of[color])
+        labels.append(label)
+    return (
+        np.array(xs, dtype=np.float64),
+        np.array(ys, dtype=np.float64),
+        np.array(rows, dtype=np.int64),
+        np.array(same, dtype=np.bool_),
+        np.array(labels, dtype=np.int64),
+    )
+
+
 def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
     if not bubbles:
         return None
     if shooter_color is not None:
-        cells = _lattice(bubbles)
-        cell_x = np.array([c[0] for c in cells], dtype=np.float64)
-        cell_y = np.array([c[1] for c in cells], dtype=np.float64)
-        cell_row = [c[2] for c in cells]
-        occupied = {(b["x"], b["y"]) for b in bubbles}
-        free = np.array([(c[0], c[1]) not in occupied for c in cells], dtype=np.bool_)
-        xs = np.array([b["x"] for b in bubbles], dtype=np.float64)
-        ys = np.array([b["y"] for b in bubbles], dtype=np.float64)
-        rows = np.array([b["row"] for b in bubbles], dtype=np.int64)
-        same = np.array([colors_match(b["color"], shooter_color) for b in bubbles], dtype=np.bool_)
-        label_map = _colour_labels(bubbles)
-        labels = np.array([label_map[id(b)] for b in bubbles], dtype=np.int64)
-        max_row = int(rows.max())
-        adj = _adjacency(xs, ys)
-        steps = int((ANGLE_MAX_DEG - ANGLE_MIN_DEG) / ANGLE_STEP_DEG) + 1
-        degs = [ANGLE_MIN_DEG + i * ANGLE_STEP_DEG for i in range(steps)]
-        angles = np.array([math.radians(d) for d in degs], dtype=np.float64)
-        landing = _landing_cells(xs, ys, cell_x, cell_y, free, float(origin[0]), float(origin[1]), angles)
-        by_cell = {}
-        for deg, c in zip(degs, landing):
-            if c != NO_CELL:
-                by_cell.setdefault(int(c), []).append(deg)
-        best = None
-        for c, cell_degs in by_cell.items():
-            score, size, dropped = _evaluate(
-                cell_x[c], cell_y[c], cell_row[c], xs, ys, rows, same, labels, adj, max_row,
-                weights.drop_weight, weights.depth_weight, weights.miss_base, weights.friend_weight,
-                weights.growth_penalty, weights.pressure_row, weights.front_weight,
-                weights.color_wipe_penalty, weights.wipe_free_bubbles,
-            )
-            score += min(len(cell_degs), WIDTH_BONUS_CAP) * WIDTH_BONUS
-            if best is None or score > best[0]:
-                why = f"pop {size} drop {dropped}" if size >= MIN_POP else f"no pop (joins {size - 1} same-colour)"
-                best = (score, c, cell_degs, why)
-        if best:
-            _, c, cell_degs, why = best
-            mid = math.radians(cell_degs[len(cell_degs) // 2])
+        first = bubbles[0]
+        cell_x, cell_y, cell_row = _lattice_arrays(bool(first["shifted"] ^ (first["row"] % 2 == 1)))
+        xs, ys, rows, same, labels = _bubble_arrays(shooter_color, bubbles)
+        c, mid_k, size, dropped = _choose(
+            xs, ys, rows, same, labels, cell_x, cell_y, cell_row, ANGLES, float(origin[0]), float(origin[1]),
+            weights.drop_weight, weights.depth_weight, weights.miss_base, weights.friend_weight,
+            weights.growth_penalty, weights.pressure_row, weights.front_weight,
+            weights.color_wipe_penalty, weights.wipe_free_bubbles,
+        )
+        if c != NO_CELL:
+            why = f"pop {size} drop {dropped}" if size >= MIN_POP else f"no pop (joins {size - 1} same-colour)"
+            mid = math.radians(DEGS[mid_k])
             x = origin[0] + CLICK_DISTANCE * math.cos(mid)
             y = origin[1] - CLICK_DISTANCE * math.sin(mid)
             cell = (int(cell_x[c]), int(cell_y[c]))
