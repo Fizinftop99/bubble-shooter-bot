@@ -75,6 +75,7 @@ All settings are optional; anything missing from `.env` falls back to the defaul
 | Pacing (how human the aiming looks) | `AIM_SPEED_PX_S`, `AIM_MIN_S`, `AIM_MAX_S`, `SHOT_WAIT_S`, `WAYPOINT_COUNT_WEIGHTS`, `HUMAN_AIM`, `ADAPTIVE_WAIT` |
 | Strategy weights | `DROP_WEIGHT`, `DEPTH_WEIGHT`, `MISS_BASE`, `FRIEND_WEIGHT`, `GROWTH_PENALTY`, `PRESSURE_ROW`, `FRONT_WEIGHT`, `COLOR_WIPE_PENALTY`, `WIPE_FREE_BUBBLES` |
 | Run limits and output | `MAX_PLAY_MINUTES`, `MAX_SHOTS` (0 = unlimited), `SCREENSHOT_DIR` |
+| Decider | `DECIDER` (`rule` or `model`), `MODEL_NAME`, `MODEL_URL`, `MODEL_TIMEOUT_S`, `MODEL_WARMUP_S`, `DECISION_LOG_DIR` |
 
 The bot does not log in to the site.
 
@@ -87,6 +88,46 @@ uv run python main.py
 A browser window opens and the bot starts shooting. Press `Ctrl+C` to stop.
 
 The bot also stops by itself at game over (the browser window stays open until you close it; set `KEEP_OPEN=false` to close it automatically), then prints shots fired, play time and the path of the final screenshot (saved in `screens/`, which shows the score).
+
+## Model decider (optional)
+
+By default every shot is picked by the built-in rule in `strategy.py`. With `--decider model` a local language model from the Hugging Face Hub picks the shot instead.
+
+How it works: the code still reads the board and simulates every reachable landing cell. The model receives the board as text plus the list of reachable cells with what each one does (pop, drop, join), and answers with JSON `{"row": r, "col": c}`. The code checks the answer and computes the aim angle. If the answer is not valid JSON, names a cell the shot cannot reach, takes longer than `MODEL_TIMEOUT_S` (3 s), or the server is down, the rule's shot is used for that turn.
+
+Setup (once):
+
+1. Install [LM Studio](https://lmstudio.ai/). It provides the `lms` command and a local server; no extra Python packages are needed.
+2. Download the model, [Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) (Apache-2.0, about 2.4 GB as a 4-bit GGUF, about 4 GB of GPU memory):
+
+```bash
+lms get "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF" --gguf -y
+```
+
+3. Start the server:
+
+```bash
+lms server start
+```
+
+4. Check the model's identifier with `lms ls` and put it in `.env` as `MODEL_NAME` if it differs from the default.
+
+Run:
+
+```bash
+uv run python main.py --decider model
+```
+
+`DECIDER=model` in `.env` does the same; the flag wins over `.env`. Any server that speaks the OpenAI chat API with JSON-schema output works (Ollama, llama.cpp `llama-server`): point `MODEL_URL` at it. Use `127.0.0.1` rather than `localhost` in the address: on Windows the name lookup added about 2 s to every request.
+
+Each shot line then ends with `decider=model latency=412ms agrees_with_rule=False`, or `decider=rule ... fallback='timeout'` when the rule took over. The final status adds the number of calls, fallback rate, mean and p95 latency. One JSON line per decision goes to `logs/decisions_*.jsonl`.
+
+Compare the two deciders on identical simulated games:
+
+```bash
+uv run python -m bubbleshooter.sim --games 12 --max-shots 400
+uv run python -m bubbleshooter.sim --games 12 --max-shots 400 --decider model
+```
 
 ## Game rules (read from the game's script)
 
@@ -132,6 +173,7 @@ bubbleshooter/
   layout.py              pixel geometry of the game canvas
   vision.py              screenshot to shooter color and grid bubbles
   strategy.py            shot simulation and target choice
+  decider.py             rule and model deciders, fallback, decision log
   bot.py                 jittered click
   browser.py             browser launch, screenshots, clicks, page recovery
   game.py                game loop, game-over detection, status report
