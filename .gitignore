@@ -7,3 +7,6 @@ scratch/
 screens_*/
 .idea/
 sim_results/
+logs/
+
+*.csv
