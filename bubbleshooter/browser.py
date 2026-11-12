@@ -33,6 +33,7 @@ class GameBrowser:
         self._context = self._playwright.chromium.launch_persistent_context(
             str(cfg.profile_path),
             headless=False,
+            chromium_sandbox=True,
             executable_path=cfg.browser_path,
             viewport=cfg.viewport,
             args=[f"--window-size={cfg.viewport_width + WINDOW_MARGIN_PX[0]},{cfg.viewport_height + WINDOW_MARGIN_PX[1]}"],
