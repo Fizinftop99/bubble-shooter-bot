@@ -39,6 +39,16 @@ class TeacherConfig:
     loss_penalty: float = 200.0
     win_bonus: float = 200.0
     survive_weight: float = 2.0
+    fast_rule: bool = False
+
+
+def rule_function(cfg):
+    """The rule used inside rollouts. The numba version returns identical shots (see tests/test_strategy_fast.py)."""
+    if cfg.fast_rule:
+        from .. import strategy_fast
+
+        return strategy_fast.choose_target
+    return strategy.choose_target
 
 
 def clone_game(game, seed):
@@ -63,13 +73,14 @@ def rollout(game, click, seed, weights, cfg, memo=None):
     """Shoot `click` on a reseeded copy, then play `depth` rule shots. `memo` reuses rule answers for identical positions."""
     twin = clone_game(game, seed)
     twin.shoot(click)
+    choose = rule_function(cfg)
     for _ in range(cfg.depth):
         if twin.is_over:
             break
         key = (twin.ready, frozenset(twin.board.items())) if memo is not None else None
         target = memo.get(key) if memo is not None else None
         if target is None:
-            target = strategy.choose_target(twin.shooter_color(), twin.bubbles(), weights=weights)
+            target = choose(twin.shooter_color(), twin.bubbles(), weights=weights)
             if target is None:
                 break
             if memo is not None:
@@ -249,8 +260,9 @@ def main():
     parser.add_argument("--margin", type=float, default=TeacherConfig.margin, help="keep the rule's shot unless the teacher's is better by more than this")
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--no-rule", action="store_true", help="skip the rule run on the same seeds")
+    parser.add_argument("--fast", action="store_true", help="use the numba rule inside rollouts (same shots, about 40x faster; needs `uv sync --group fast`)")
     args = parser.parse_args()
-    cfg = TeacherConfig(top_k=args.top_k, rollouts=args.rollouts, depth=args.depth, margin=args.margin)
+    cfg = TeacherConfig(top_k=args.top_k, rollouts=args.rollouts, depth=args.depth, margin=args.margin, fast_rule=args.fast)
     seeds = range(args.seed_start, args.seed_start + args.games)
     label = f"teacher_k{cfg.top_k}_n{cfg.rollouts}_d{cfg.depth}" + (f"_m{cfg.margin:g}" if cfg.margin else "")
     print(f"{label}: seeds {seeds.start}-{seeds.stop - 1}, max {args.max_shots} shots, {args.workers} workers", flush=True)
@@ -262,7 +274,7 @@ def main():
         print(f"  csv: {save_csv('teacher_rulebase', results['rule'])}")
     teacher = results["teacher"]
     print_summary(label, teacher)
-    print(f"  csv: {save_csv(label, teacher)}  ({elapsed:.0f}s wall)")
+    print(f"  csv: {save_csv(f'{label}_s{seeds.start}-{seeds.stop - 1}', teacher)}  ({elapsed:.0f}s wall)")
     if results["rule"]:
         print_paired(results["rule"], teacher)
 

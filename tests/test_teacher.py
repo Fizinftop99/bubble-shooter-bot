@@ -21,6 +21,15 @@ def decide(seed, cfg=CFG):
     return game, bot, bot.decide(game.shooter_color(), game.bubbles())
 
 
+def test_fast_rule_gives_the_same_teacher_choice():
+    fast = teacher.TeacherConfig(top_k=3, rollouts=2, depth=2, fast_rule=True)
+    for seed in (1, 2, 3):
+        _, slow_bot, slow = decide(seed)
+        _, fast_bot, quick = decide(seed, fast)
+        assert (quick.x, quick.y, quick.reason) == (slow.x, slow.y, slow.reason)
+        assert [round(v, 9) for _, v in fast_bot.last_values] == [round(v, 9) for _, v in slow_bot.last_values]
+
+
 def test_rollouts_do_not_mutate_the_real_game():
     game = SimGame(3)
     before = copy.deepcopy(snapshot(game))
