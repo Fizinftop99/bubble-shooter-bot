@@ -6,3 +6,8 @@ scratch/
 .brave-profile/
 screens_*/
 .idea/
+sim_results/
+logs/
+
+*.csv
+datasets/
