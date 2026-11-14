@@ -93,7 +93,7 @@ The bot also stops by itself at game over (the browser window stays open until y
 
 By default every shot is picked by the built-in rule in `strategy.py`. With `--decider model` a local language model from the Hugging Face Hub picks the shot instead.
 
-How it works: the code still reads the board and simulates every reachable landing cell. The model receives the board as text plus the list of reachable cells with what each one does (pop, drop, join), and answers with JSON `{"row": r, "col": c}`. The code checks the answer and computes the aim angle. If the answer is not valid JSON, names a cell the shot cannot reach, takes longer than `MODEL_TIMEOUT_S` (3 s), or the server is down, the rule's shot is used for that turn.
+How it works: the code still reads the board and simulates every reachable landing cell. The model receives the board as text plus the four best reachable cells by the rule's score (`CANDIDATES_SHOWN` in `decider.py`, the same four the training data is labelled on) with what each one does (pop, drop, join), and answers with JSON `{"row": r, "col": c}`. The code checks the answer and computes the aim angle. If the answer is not valid JSON, names a cell outside those four, takes longer than `MODEL_TIMEOUT_S` (3 s), or the server is down, the rule's shot is used for that turn.
 
 Setup (once):
 

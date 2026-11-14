@@ -32,9 +32,14 @@ def rule_choice(shooter, bubbles):
 
 
 def other_candidate(shooter, bubbles):
-    candidates = strategy.list_candidates(shooter, bubbles, weights=WEIGHTS)
+    candidates = shortlist(shooter, bubbles)
     best = strategy.best_candidate(candidates)
     return next(c for c in candidates if c.cell != best.cell)
+
+
+def shortlist(shooter, bubbles):
+    candidates = strategy.list_candidates(shooter, bubbles, weights=WEIGHTS)
+    return sorted(candidates, key=lambda c: -c.score)[: decider.CANDIDATES_SHOWN]
 
 
 def answer_for(candidate):
@@ -80,16 +85,40 @@ def test_model_answer_is_used_and_aim_comes_from_code():
     assert model.model_shots == 1 and model.disagreements == 1
 
 
-def test_prompt_lists_every_reachable_cell_without_scores():
+def test_prompt_lists_only_the_top_cells_without_scores():
     shooter, bubbles = board()
     client = FakeClient('{"row": 0, "col": 0}')
     decider.ModelDecider(WEIGHTS, SETTINGS, client=client).decide(shooter, bubbles)
-    candidates = strategy.list_candidates(shooter, bubbles, weights=WEIGHTS)
+    everything = strategy.list_candidates(shooter, bubbles, weights=WEIGHTS)
+    shown = shortlist(shooter, bubbles)
+    assert len(everything) > len(shown) == decider.CANDIDATES_SHOWN  # the board must actually be cut for this test to mean anything
     prompt = client.prompts[0]
-    for candidate in candidates:
+    assert prompt.count("\n- row ") == len(shown)
+    for candidate in shown:
         row, col = decider.cell_address(candidate.cell)
         assert f"- row {row} col {col}: {candidate.why}" in prompt
     assert "score" not in prompt.lower()
+
+
+def test_cell_outside_the_shortlist_is_refused():
+    shooter, bubbles = board()
+    shown = {decider.cell_address(c.cell) for c in shortlist(shooter, bubbles)}
+    outside = next(c for c in strategy.list_candidates(shooter, bubbles, weights=WEIGHTS) if decider.cell_address(c.cell) not in shown)
+    assert_falls_back(FakeClient(answer_for(outside)), "unreachable cell")
+
+
+def test_prompt_matches_the_training_prompt_of_the_same_position():
+    from bubbleshooter.sim import dataset
+    from bubbleshooter.sim.prompts import prompt_from_record
+    from bubbleshooter.sim.teacher import RolloutTeacher, TeacherConfig
+
+    game = SimGame(1001)
+    teacher = RolloutTeacher(WEIGHTS, TeacherConfig(top_k=decider.CANDIDATES_SHOWN, rollouts=1, depth=1, fast_rule=True), 1001).bind(game)
+    teacher.decide(game.shooter_color(), game.bubbles())
+    record = dataset.make_record(1001, game, teacher)
+    client = FakeClient('{"row": 0, "col": 0}')
+    decider.ModelDecider(WEIGHTS, SETTINGS, client=client).decide(game.shooter_color(), game.bubbles())
+    assert client.prompts[0] == prompt_from_record(record)
 
 
 def assert_falls_back(client, expected):

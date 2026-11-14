@@ -13,6 +13,7 @@ from .vision import colors_match
 
 COLOUR_LETTERS = "RGBYMCOPQ"
 MAX_ANSWER_TOKENS = 24
+CANDIDATES_SHOWN = 4  # must equal the teacher's top_k used for the training data (dataset.DATASET_CONFIG)
 REQUEST_WORKERS = 4
 ANSWER_SCHEMA = {
     "type": "object",
@@ -28,7 +29,7 @@ SYSTEM_PROMPT = (
     "A shot that does not pop costs a life; with no lives left, new rows are pushed in from the top. "
     "A bubble reaching row 15 loses the game. "
     "Removing the last bubble of a colour makes every later push bigger, so avoid it unless the board is nearly clear.\n"
-    "You are given every cell the shot can reach and what happens there. Pick exactly one of those cells. "
+    "You are given a few promising cells the shot can reach and what happens there. Pick exactly one of those cells. "
     'Answer with JSON only: {"row": <row>, "col": <col>}.'
 )
 
@@ -81,7 +82,9 @@ def _palette(shooter_color, bubbles):
         reps.append(color)
         return COLOUR_LETTERS[(len(reps) - 1) % len(COLOUR_LETTERS)]
 
-    for b in bubbles:
+    # Letters follow the first appearance in reading order, so the same board gets the same letters
+    # whatever order the caller lists the bubbles in (live vision, simulator, or a dataset record).
+    for b in sorted(bubbles, key=lambda b: (b["row"], b["x"])):
         letter(b["color"])
     return letter
 
@@ -163,8 +166,9 @@ class DecisionLog:
 class ModelDecider:
     name = "model"
 
-    def __init__(self, weights, settings, client=None, log=None):
+    def __init__(self, weights, settings, client=None, log=None, shown=CANDIDATES_SHOWN):
         self._weights = weights
+        self._shown = shown
         self._timeout_s = settings.model_timeout_s
         self._warmup_s = settings.model_warmup_s
         self._client = client or ChatClient(settings.model_url, settings.model_name)
@@ -187,8 +191,11 @@ class ModelDecider:
         candidates = strategy.list_candidates(shooter_color, bubbles, weights=self._weights)
         if len(candidates) < 2:
             return self._record(self._rule.decide(shooter_color, bubbles), bubbles)
+        # Same shortlist the rollout teacher labelled: the best few cells by the rule's score (stable sort, so the
+        # rule's own pick stays first on ties). Cells outside it are not offered, so the model cannot pick them.
+        shortlist = sorted(candidates, key=lambda c: -c.score)[: self._shown]
         started = time.perf_counter()
-        candidate, problem = self._ask(shooter_color, bubbles, candidates)
+        candidate, problem = self._ask(shooter_color, bubbles, shortlist)
         latency_ms = (time.perf_counter() - started) * 1000
         self.latencies_ms.append(latency_ms)
         best = strategy.best_candidate(candidates)
