@@ -8,9 +8,10 @@ from bubbleshooter.sim.teacher import RolloutTeacher, TeacherConfig
 
 CFG = TeacherConfig(top_k=3, rollouts=2, depth=2, fast_rule=True)
 FIELDS = {
-    "seed", "shot", "lives", "max_row", "bubble_count", "board", "shifted_rows", "shooter", "next", "candidates", "chosen", "rule_choice",
+    "schema", "seed", "shot", "lives", "max_row", "bubble_count", "board", "shifted_rows", "shooter", "next", "candidates",
+    "chosen", "rule_choice",
 }
-CANDIDATE_FIELDS = {"row", "col", "why", "rule_score", "wiped", "teacher_value", "click"}
+CANDIDATE_FIELDS = {"row", "col", "why", "rule_score", "wiped", "teacher_value", "click", "rollouts"}
 
 
 def first_game(seed=1001, shots=6):

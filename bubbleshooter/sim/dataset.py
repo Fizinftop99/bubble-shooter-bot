@@ -3,10 +3,17 @@
 Each record is enough to re-render a prompt and to build soft targets without the simulator.
 Positions with a single candidate carry no learning signal and are not written (they are counted).
 
-    uv run python -m bubbleshooter.sim.dataset --games 12 --seed-start 1001 --workers 12 --out datasets/teacher_s1001-1012.jsonl
+Schema 2: every candidate also keeps the raw result of each rollout, [points, status, shots, front, bubbles, lives]
+(teacher.rollout_outcome), so labels can be recomputed for any outcome function and their noise estimated from the
+spread of rollouts (sim/relabel.py). A <out>.meta.json next to the file records how it was made.
+
+    uv run --group fast python -m bubbleshooter.sim.dataset --games 8 --seed-start 4001 --workers 8 --max-shots 1200 \
+        --out datasets/teacher_v2_noscore_n10_s4001-4008.jsonl
 """
 import argparse
+import dataclasses
 import json
+import subprocess
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -14,9 +21,11 @@ from pathlib import Path
 from ..decider import cell_address
 from .engine import SimGame
 from .runner import DEFAULT_MAX_SHOTS, weights_from_overrides
-from .teacher import RolloutTeacher, TeacherConfig
+from .teacher import OUTCOMES, RolloutTeacher, TeacherConfig
 
-DATASET_CONFIG = TeacherConfig(top_k=4, rollouts=5, depth=8, fast_rule=True)
+SCHEMA = 2
+DATASET_OUTCOME = "noscore"  # what the teacher optimises while playing the games; labels can be recomputed for others
+DATASET_CONFIG = TeacherConfig(top_k=4, rollouts=10, depth=8, fast_rule=True, **OUTCOMES[DATASET_OUTCOME])
 
 
 def board_triples(game):
@@ -35,7 +44,7 @@ def make_record(seed, game, teacher):
         if values[i][1] > values[chosen][1]:
             chosen = i
     candidates = []
-    for candidate, value in values:
+    for i, (candidate, value) in enumerate(values):
         row, col = cell_address(candidate.cell)
         click_x, click_y, _ = candidate.aim()
         candidates.append(
@@ -47,9 +56,11 @@ def make_record(seed, game, teacher):
                 "wiped": candidate.wiped,
                 "teacher_value": value,
                 "click": [click_x, click_y],
+                "rollouts": [list(outcome) for outcome in teacher.last_outcomes[i]],
             }
         )
     return {
+        "schema": SCHEMA,
         "seed": seed,
         "shot": game.shots,
         "lives": game.lives,
@@ -99,6 +110,34 @@ def encode(record):
     return json.dumps(record, separators=(",", ":"))
 
 
+def meta_path(out):
+    out = Path(out)
+    return out.with_name(out.stem + ".meta.json")
+
+
+def _git_state():
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip())
+    except (OSError, subprocess.CalledProcessError):
+        return None, None
+    return commit, dirty
+
+
+def make_meta(cfg, outcome, seeds, max_shots):
+    commit, dirty = _git_state()
+    return {
+        "schema": SCHEMA,
+        "outcome": outcome,
+        "teacher_config": dataclasses.asdict(cfg),
+        "seeds": [seeds[0], seeds[-1]],
+        "max_shots": max_shots,
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate teacher-labelled positions as JSON lines")
     parser.add_argument("--games", type=int, required=True)
@@ -109,16 +148,24 @@ def main():
     parser.add_argument("--rollouts", type=int, default=DATASET_CONFIG.rollouts)
     parser.add_argument("--depth", type=int, default=DATASET_CONFIG.depth)
     parser.add_argument("--slow-rule", action="store_true", help="use the pure-python rule inside rollouts instead of numba")
+    parser.add_argument("--outcome", choices=sorted(OUTCOMES), default=DATASET_OUTCOME,
+                        help="outcome function the teacher plays with (raw rollouts are stored either way)")
     parser.add_argument("--out", required=True, help="output .jsonl; include the seed range in the name; never overwritten")
     args = parser.parse_args()
-    cfg = TeacherConfig(top_k=args.top_k, rollouts=args.rollouts, depth=args.depth, fast_rule=not args.slow_rule)
+    cfg = TeacherConfig(
+        top_k=args.top_k, rollouts=args.rollouts, depth=args.depth, fast_rule=not args.slow_rule, **OUTCOMES[args.outcome]
+    )
     seeds = list(range(args.seed_start, args.seed_start + args.games))
     out = Path(args.out)
-    if out.exists():
-        raise SystemExit(f"refusing to overwrite {out}")
+    meta = meta_path(out)
+    for path in (out, meta):
+        if path.exists():
+            raise SystemExit(f"refusing to overwrite {path}")
     out.parent.mkdir(parents=True, exist_ok=True)
+    with meta.open("x", encoding="utf-8") as fh:
+        json.dump(make_meta(cfg, args.outcome, seeds, args.max_shots), fh, indent=2)
     print(f"{out}: seeds {seeds[0]}-{seeds[-1]}, K={cfg.top_k} N={cfg.rollouts} D={cfg.depth} fast={cfg.fast_rule}, "
-          f"max {args.max_shots} shots, {args.workers} workers", flush=True)
+          f"outcome {args.outcome}, max {args.max_shots} shots, {args.workers} workers", flush=True)
     started = time.time()
     outcomes, total, skipped_total, shots_total = {}, 0, 0, 0
     with out.open("x", encoding="utf-8", newline="\n") as fh, ProcessPoolExecutor(max_workers=args.workers) as pool:
