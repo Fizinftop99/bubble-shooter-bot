@@ -1,4 +1,5 @@
 import math
+import os
 from dataclasses import dataclass
 
 from . import layout
@@ -150,8 +151,34 @@ class Candidate:
 
 
 def list_candidates(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
+    """Every reachable cell with its score. Uses strategy_fast (numba, identical candidates) when available."""
     if not bubbles or shooter_color is None:
         return []
+    fast = _fast_module()
+    if fast is not None:
+        result = fast.list_candidates(shooter_color, bubbles, origin, weights)
+        if result is not None:
+            return result
+    return _list_candidates_pure(shooter_color, bubbles, origin, weights)
+
+
+_FAST = []
+
+
+def _fast_module():
+    """strategy_fast, or None without numba or with BUBBLE_SIM_PURE=1. Imported lazily: it imports this module."""
+    if not _FAST:
+        module = None
+        if os.environ.get("BUBBLE_SIM_PURE") != "1":
+            try:
+                from . import strategy_fast as module
+            except ImportError:
+                module = None
+        _FAST.append(module)
+    return _FAST[0]
+
+
+def _list_candidates_pure(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
     cells = _lattice(bubbles)
     occupied = {(b["x"], b["y"]) for b in bubbles}
     max_row = max(b["row"] for b in bubbles)

@@ -17,6 +17,7 @@ from .strategy import (
     MIN_POP,
     WIDTH_BONUS,
     WIDTH_BONUS_CAP,
+    Candidate,
     _lattice,
 )
 from .vision import colors_match
@@ -154,6 +155,7 @@ def _evaluate(cx, cy, row, xs, ys, rows, same, labels, nbr, cnt, max_row,
                     new_max_row = rows[i]
         dropped = rest - kept
         score = size + drop_weight * dropped + depth_weight * row
+        wiped = 0
         if kept > wipe_free:
             seen_before = np.zeros(n + 1, dtype=np.bool_)
             seen_after = np.zeros(n + 1, dtype=np.bool_)
@@ -161,24 +163,22 @@ def _evaluate(cx, cy, row, xs, ys, rows, same, labels, nbr, cnt, max_row,
                 seen_before[labels[i]] = True
                 if anchored[i]:
                     seen_after[labels[i]] = True
-            wiped = 0
             for k in range(n + 1):
                 if seen_before[k] and not seen_after[k]:
                     wiped += 1
             score -= wipe_penalty * wiped
         if pressure:
             score += front_weight * (max_row - new_max_row)
-        return score, size, dropped
+        return score, size, dropped, wiped
     friends = size - 1
     growth = max(0, row - max_row)
     penalty = growth_penalty + (front_weight if pressure else 0.0)
-    return miss_base + friend_weight * friends - penalty * growth, size, 0
+    return miss_base + friend_weight * friends - penalty * growth, size, 0, 0
 
 
 @njit(cache=True)
-def _choose(xs, ys, rows, same, labels, cell_x, cell_y, cell_row, angles, ox, oy,
-            drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
-            pressure_row, front_weight, wipe_penalty, wipe_free):
+def _reachable(xs, ys, rows, cell_x, cell_y, angles, ox, oy):
+    """(landing cell per angle, shots per cell, cells in order of first landing, how many, max row)."""
     n = xs.shape[0]
     n_cells = cell_x.shape[0]
     free = np.ones(n_cells, dtype=np.bool_)
@@ -201,11 +201,19 @@ def _choose(xs, ys, rows, same, labels, cell_x, cell_y, cell_row, angles, ox, oy
                 order[n_order] = c
                 n_order += 1
             counts[c] += 1
+    return landing, counts, order, n_order, max_row
+
+
+@njit(cache=True)
+def _choose(xs, ys, rows, same, labels, cell_x, cell_y, cell_row, angles, ox, oy,
+            drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
+            pressure_row, front_weight, wipe_penalty, wipe_free):
+    landing, counts, order, n_order, max_row = _reachable(xs, ys, rows, cell_x, cell_y, angles, ox, oy)
     nbr, cnt = _adjacency(xs, ys)
     best_c, best_score, best_size, best_dropped = NO_CELL, 0.0, 0, 0
     for o in range(n_order):
         c = order[o]
-        score, size, dropped = _evaluate(
+        score, size, dropped, _ = _evaluate(
             cell_x[c], cell_y[c], cell_row[c], xs, ys, rows, same, labels, nbr, cnt, max_row,
             drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
             pressure_row, front_weight, wipe_penalty, wipe_free,
@@ -223,6 +231,34 @@ def _choose(xs, ys, rows, same, labels, cell_x, cell_y, cell_row, angles, ox, oy
                     break
                 seen += 1
     return best_c, mid_k, best_size, best_dropped
+
+
+@njit(cache=True)
+def _list(xs, ys, rows, same, labels, cell_x, cell_y, cell_row, angles, ox, oy,
+          drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
+          pressure_row, front_weight, wipe_penalty, wipe_free):
+    """strategy.list_candidates as arrays: per candidate (in its order) the cell index, score with the width
+    bonus, cluster size, dropped, wiped; plus the landing cell of every angle (to rebuild the degree lists)."""
+    landing, counts, order, n_order, max_row = _reachable(xs, ys, rows, cell_x, cell_y, angles, ox, oy)
+    nbr, cnt = _adjacency(xs, ys)
+    scores = np.empty(n_order, dtype=np.float64)
+    ints = np.empty((n_order, 3), dtype=np.int64)
+    for o in range(n_order):
+        c = order[o]
+        score, size, dropped, wiped = _evaluate(
+            cell_x[c], cell_y[c], cell_row[c], xs, ys, rows, same, labels, nbr, cnt, max_row,
+            drop_weight, depth_weight, miss_base, friend_weight, growth_penalty,
+            pressure_row, front_weight, wipe_penalty, wipe_free,
+        )
+        scores[o] = score + min(counts[c], WIDTH_BONUS_CAP) * WIDTH_BONUS
+        ints[o, 0], ints[o, 1], ints[o, 2] = size, dropped, wiped
+    return order[:n_order], scores, ints, landing
+
+
+@lru_cache(maxsize=None)
+def _lattice_cells(top_shift):
+    """strategy._lattice as Python tuples (the Candidate.cell values), for one parity of the top row."""
+    return tuple(_lattice([{"shifted": top_shift, "row": 0}]))
 
 
 @lru_cache(maxsize=None)
@@ -268,6 +304,40 @@ def _bubble_arrays(shooter_color, bubbles):
         np.array(same, dtype=np.bool_),
         np.array(labels, dtype=np.int64),
     )
+
+
+FLOAT_WEIGHTS = ("drop_weight", "depth_weight", "miss_base", "friend_weight", "growth_penalty", "front_weight", "color_wipe_penalty")
+
+
+def list_candidates(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
+    """strategy.list_candidates, same Candidates in the same order; None when the inputs are outside what the
+    kernel reproduces exactly (non-float weights, non-int pressure/wipe thresholds), so the caller uses Python."""
+    if not bubbles or shooter_color is None:
+        return []
+    if not all(type(getattr(weights, f)) is float for f in FLOAT_WEIGHTS) or not all(
+        type(getattr(weights, f)) is int for f in ("pressure_row", "wipe_free_bubbles")
+    ):
+        return None
+    first = bubbles[0]
+    top_shift = bool(first["shifted"] ^ (first["row"] % 2 == 1))
+    cells = _lattice_cells(top_shift)
+    cell_x, cell_y, cell_row = _lattice_arrays(top_shift)
+    xs, ys, rows, same, labels = _bubble_arrays(shooter_color, bubbles)
+    order, scores, ints, landing = _list(
+        xs, ys, rows, same, labels, cell_x, cell_y, cell_row, ANGLES, float(origin[0]), float(origin[1]),
+        weights.drop_weight, weights.depth_weight, weights.miss_base, weights.friend_weight,
+        weights.growth_penalty, weights.pressure_row, weights.front_weight,
+        weights.color_wipe_penalty, weights.wipe_free_bubbles,
+    )
+    degs = {}
+    for k, c in enumerate(landing.tolist()):
+        if c != NO_CELL:
+            degs.setdefault(c, []).append(DEGS[k])
+    out = []
+    for c, score, (size, dropped, wiped) in zip(order.tolist(), scores.tolist(), ints.tolist()):
+        why = f"pop {size} drop {dropped}" if size >= MIN_POP else f"no pop (joins {size - 1} same-colour)"
+        out.append(Candidate(cells[c], tuple(degs[c]), score, why, wiped))
+    return out
 
 
 def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
