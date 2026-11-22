@@ -5,6 +5,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from .. import bot
 from ..config import StrategyWeights, load_settings
 from ..decider import ModelDecider
 from .runner import DEFAULT_MAX_SHOTS, run_job, summarize
@@ -17,8 +18,8 @@ def parse_overrides(text):
     return dict(part.strip().split("=", 1) for part in pairs)
 
 
-def run_variant(overrides, seeds, max_shots, workers, decider_settings=None):
-    jobs = [(overrides, seed, max_shots, decider_settings) for seed in seeds]
+def run_variant(overrides, seeds, max_shots, workers, decider_settings=None, jitter=bot.JITTER_PX, click_area=True):
+    jobs = [(overrides, seed, max_shots, decider_settings, jitter, click_area) for seed in seeds]
     if workers <= 1:
         return [run_job(job) for job in jobs]
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -58,6 +59,8 @@ def main():
     parser.add_argument("--model-name", help="override MODEL_NAME for --decider model")
     parser.add_argument("--max-shots", type=int, default=DEFAULT_MAX_SHOTS)
     parser.add_argument("--set", default="", help="comma separated StrategyWeights overrides, e.g. FRONT_WEIGHT=0,DROP_WEIGHT=5")
+    parser.add_argument("--jitter", type=float, default=bot.JITTER_PX, help=f"click jitter in pixels, as the real bot clicks (default {bot.JITTER_PX}; 0 = exact clicks)")
+    parser.add_argument("--any-click", action="store_true", help="fire on every click, even outside the game's clickable area")
     parser.add_argument("--compare", nargs=2, metavar=("A", "B"), help="two override sets run on the same seeds")
     args = parser.parse_args()
     seeds = range(args.seed_start, args.seed_start + args.games)
@@ -74,7 +77,7 @@ def main():
     all_results = {}
     for label, text in variants:
         started = time.time()
-        results = run_variant(parse_overrides(text), seeds, args.max_shots, workers, decider_settings)
+        results = run_variant(parse_overrides(text), seeds, args.max_shots, workers, decider_settings, args.jitter, not args.any_click)
         all_results[label] = results
         print_summary(f"{label}: {text or 'defaults'}{' [model decider]' if decider_settings else ''}", results)
         print(f"  csv: {save_csv(label, results)}  ({time.time() - started:.0f}s)")

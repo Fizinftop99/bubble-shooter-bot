@@ -32,6 +32,11 @@ POP_SCORE_UNIT = 10
 POP_SCORE_GROUP = 3
 HANG_SCORE = 100
 SCREEN_SCALE = 749 / 800
+# Cannon.clickableArea: only a press inside this rectangle (game coordinates) fires a shot.
+CLICK_AREA_LEFT = 25
+CLICK_AREA_TOP = 25
+CLICK_AREA_RIGHT = 25 + 560
+CLICK_AREA_BOTTOM = 25 + 480
 
 PALETTE = (
     (0, 188, 31),
@@ -60,8 +65,11 @@ def _neighbors(bx, by):
 
 
 class SimGame:
-    def __init__(self, seed=0):
+    def __init__(self, seed=0, click_area=False):
+        """click_area=True ignores clicks the game would ignore (shoot returns None); off by default because
+        rollout and dataset loops count on every call firing a shot."""
         self.rng = random.Random(seed)
+        self.click_area = click_area
         self.board = {}
         self.score = 0
         self.shots = 0
@@ -121,9 +129,17 @@ class SimGame:
         self.ready = self.queue
         self.queue = self._random_color(self._present_colors(include_queue=False))
 
+    @staticmethod
+    def in_click_area(click):
+        x, y = click[0] / SCREEN_SCALE, click[1] / SCREEN_SCALE
+        return CLICK_AREA_LEFT <= x < CLICK_AREA_RIGHT and CLICK_AREA_TOP <= y < CLICK_AREA_BOTTOM
+
     def shoot(self, click):
+        """True if the shot popped, False if not, None if click_area is on and the game ignores this click."""
         if self.is_over:
             raise RuntimeError("game is over")
+        if self.click_area and not self.in_click_area(click):
+            return None
         self.shots += 1
         color = self.ready
         vx, vy = self._launch_velocity(click[0] / SCREEN_SCALE, click[1] / SCREEN_SCALE)
@@ -266,6 +282,8 @@ class SimGame:
             self._push_rows()
 
     def _push_rows(self):
+        """addNewRow. Each addOneRow calls onUpdate(0) on every bubble right away, so a bubble on LOSS_ROW
+        ends the game even if it is left hanging and would drop a moment later."""
         self.pushes += 1
         present = self._present_colors(include_queue=True)
         rows = 1 + COLOR_COUNT - len(present)
@@ -279,6 +297,8 @@ class SimGame:
             self.board = {(bx, by + 1): color for (bx, by), color in self.board.items()}
             for bx in range(BOARD_WIDTH):
                 self.board[(bx, 0)] = self._random_color(present)
+            if any(by >= LOSS_ROW for _, by in self.board):
+                self.lost = True
         self._drop_hanging()
 
     def _finish_turn(self):

@@ -122,3 +122,28 @@ def test_new_shooter_colours_come_from_the_board():
     for _ in range(20):
         game._promote()
         assert game.queue == 2
+
+
+def test_click_outside_the_clickable_area_fires_nothing():
+    game = SimGame(4, click_area=True)
+    before = (dict(game.board), game.shots, game.lives, game.ready, game.queue, game.rng.getstate())
+    below = (engine.SHOOTER_X * engine.SCREEN_SCALE, (engine.CLICK_AREA_BOTTOM + 1) * engine.SCREEN_SCALE)
+    assert game.shoot(below) is None
+    assert (dict(game.board), game.shots, game.lives, game.ready, game.queue, game.rng.getstate()) == before
+
+
+def test_click_area_is_off_by_default():
+    game = SimGame(4)
+    below = (engine.SHOOTER_X * engine.SCREEN_SCALE, (engine.CLICK_AREA_BOTTOM + 1) * engine.SCREEN_SCALE)
+    assert game.shoot(below) is not None
+    assert game.shots == 1
+
+
+def test_push_loses_on_a_bubble_that_reaches_row_fifteen_and_then_drops():
+    game = empty_game()
+    game.ready, game.queue = 0, 0
+    game.board = {(x, 0): 0 for x in range(engine.BOARD_WIDTH)}
+    game.board[(5, engine.LOSS_ROW - 2)] = 1  # not attached; four missing colours give 5 rows
+    game._push_rows()
+    assert (5, engine.LOSS_ROW - 2 + 5) not in game.board  # it dropped
+    assert game.lost

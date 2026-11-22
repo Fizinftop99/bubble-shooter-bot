@@ -153,8 +153,10 @@ uv run pytest
 - `--set` / `--compare` take any `StrategyWeights` field (names as in `.env`). `--compare` runs both variants on the same seeds and prints how many games the second lasted longer.
 - Per-game CSVs go to `sim_results/` (git-ignored). Each seed is a reproducible game.
 - Speed: about 25 ms per shot per core (the strategy dominates); 16 games of ~800 shots take under a minute on 16 workers.
-- Calibration against real runs: pop rate 0.675 (real 0.65-0.72), a row pushed every 11.6 shots (real ~10-11), "predicted pop vs actual pop" mismatch 5.5% (real 5.6%).
-- Not modelled: animation timing and the exact order of the game's internal bubble array (only matters for ceiling hits next to a collision).
+- Calibration against real runs (64 games, 1500-shot cap, defaults): pop rate 0.651 (real 0.65-0.72), a row pushed every 11.0 shots (real ~10-11), "predicted pop vs actual pop" mismatch 7.7% (real 5.6%), 0.74 losses per 1000 shots, no ignored clicks. Exact clicks (`--jitter 0`) gave 0.674 / 11.6 / 5.5% and 0.52 losses per 1000 shots before the strategy's aim range was cut to 15-165 degrees.
+- Shots are fired as the real bot fires them: every click moves by up to `--jitter` pixels (default 5, `bot.JITTER_PX`; `--jitter 0` for exact clicks), and a click outside the game's clickable rectangle (x 25-585, y 25-505 in game coordinates) fires nothing (`--any-click` turns this off). 8 ignored clicks in a row end the game as `stuck`, which `loss_per_1000` counts as a loss, as it would stop the real bot.
+- A push that moves any bubble to row 15 loses at once, even a bubble that is left hanging and would drop, as `addOneRow` checks before `markHangingClusters`.
+- Not modelled: animation timing. The game tests the ceiling and the collisions in the order of its internal bubble array, but that order cannot change a landing: the newest array entry is the bubble waiting in the queue, except right after a push, and then row 0 is full and the ceiling cannot be reached.
 
 ## Inspect what the bot sees
 

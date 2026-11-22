@@ -10,8 +10,10 @@ CONTACT_DIST = 29
 MAX_BOUNCES = 2
 MAX_SNAP_DIST = 20
 MIN_POP = 3
-ANGLE_MIN_DEG = 8
-ANGLE_MAX_DEG = 172
+# The game clamps the launch to 15 degrees above the horizontal (Cannon.cannonFired), and below about 10 degrees
+# the click at CLICK_DISTANCE falls outside the clickable area and fires nothing; so aim only where the game shoots.
+ANGLE_MIN_DEG = 15
+ANGLE_MAX_DEG = 165
 ANGLE_STEP_DEG = 0.5
 CLICK_DISTANCE = 250
 WIDTH_BONUS = 0.05

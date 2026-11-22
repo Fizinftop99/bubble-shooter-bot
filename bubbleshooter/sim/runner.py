@@ -1,13 +1,16 @@
+import random
 import re
 import statistics
 from dataclasses import dataclass, replace
 
-from .. import strategy
+from .. import bot, strategy
 from ..config import StrategyWeights, _from_env_values
 from ..decider import DecisionLog, ModelDecider
 from .engine import SimGame
 
 DEFAULT_MAX_SHOTS = 2000
+STUCK_LIMIT = 8  # game.STALL_LIMIT: the real bot gives up after this many clicks that change nothing
+JITTER_SEED_SALT = 0x5EED_C11C  # the click jitter has its own generator so the game's colours stay the same
 CELL_PATTERN = re.compile(r"at cell \((\d+), (\d+)\)")
 
 
@@ -24,6 +27,7 @@ class GameResult:
     landing_checked: int
     landing_mismatch: int
     pop_mismatch: int
+    ignored_clicks: int = 0
     model_calls: int = 0
     model_shots: int = 0
     fallbacks: int = 0
@@ -50,8 +54,13 @@ def _model_stats(decider):
     }
 
 
-def play(weights, seed, max_shots=DEFAULT_MAX_SHOTS, decider=None):
-    game = SimGame(seed)
+def play(weights, seed, max_shots=DEFAULT_MAX_SHOTS, decider=None, jitter=0, click_area=False):
+    """One game. jitter > 0 moves every click by up to that many pixels, as bot.HumanAimer does in the real game.
+    click_area=True drops clicks outside the game's clickable rectangle; STUCK_LIMIT of them in a row end the
+    game as "stuck"."""
+    game = SimGame(seed, click_area=click_area)
+    ignored = ignored_streak = 0
+    click_rng = random.Random(seed ^ JITTER_SEED_SALT)
     pops = wipes = checked = landing_bad = pop_bad = max_row = 0
     colors = {c for c in game.board.values()}
     while not game.is_over and game.shots < max_shots:
@@ -61,7 +70,16 @@ def play(weights, seed, max_shots=DEFAULT_MAX_SHOTS, decider=None):
         else:
             decision = decider.decide(game.shooter_color(), bubbles, game.next_color(), game.lives)
             x, y, reason = decision.x, decision.y, decision.reason
+        if jitter:
+            x, y = bot.jittered_point({"x": 0, "y": 0}, (x, y), jitter, click_rng)
         popped = game.shoot((x, y))
+        if popped is None:
+            ignored += 1
+            ignored_streak += 1
+            if ignored_streak >= STUCK_LIMIT:
+                break
+            continue
+        ignored_streak = 0
         pops += popped
         match = CELL_PATTERN.search(reason)
         if match:
@@ -73,20 +91,20 @@ def play(weights, seed, max_shots=DEFAULT_MAX_SHOTS, decider=None):
         colors = now
         if game.board:
             max_row = max(max_row, max(by for _, by in game.board))
-    outcome = "won" if game.won else "lost" if game.lost else "limit"
+    outcome = "won" if game.won else "lost" if game.lost else "stuck" if ignored_streak else "limit"
     return GameResult(
         seed, outcome, game.shots, game.final_score, max_row, game.pushes, pops, wipes, checked, landing_bad, pop_bad,
-        **_model_stats(decider),
+        ignored_clicks=ignored, **_model_stats(decider),
     )
 
 
 def run_job(job):
-    overrides, seed, max_shots, decider_settings = job
+    overrides, seed, max_shots, decider_settings, jitter, click_area = job
     weights = weights_from_overrides(overrides)
     decider = None
     if decider_settings is not None and decider_settings.decider == "model":
         decider = ModelDecider(weights, decider_settings, log=DecisionLog(decider_settings.decision_log_dir, f"sim_seed{seed}"))
-    return play(weights, seed, max_shots, decider)
+    return play(weights, seed, max_shots, decider, jitter, click_area)
 
 
 def summarize(results):
@@ -96,7 +114,10 @@ def summarize(results):
         "games": n,
         "won": sum(r.outcome == "won" for r in results),
         "lost": sum(r.outcome == "lost" for r in results),
+        "stuck": sum(r.outcome == "stuck" for r in results),
         "limit": sum(r.outcome == "limit" for r in results),
+        "loss_per_1000": round(1000 * sum(r.outcome in ("lost", "stuck") for r in results) / max(1, sum(shots)), 3),
+        "ignored_clicks": sum(r.ignored_clicks for r in results),
         "median_shots": statistics.median(shots),
         "mean_shots": round(statistics.mean(shots), 1),
         "mean_score": round(statistics.mean(r.score for r in results)),
