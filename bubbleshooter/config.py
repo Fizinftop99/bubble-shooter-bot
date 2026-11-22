@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,6 +17,7 @@ class BrowserSettings:
     block_ads: bool = True
     user_data_dir: str = ".brave-profile"
     keep_open: bool = True
+    headless: bool = False
 
     @property
     def profile_path(self):
@@ -60,27 +61,48 @@ class RunSettings:
 
 
 @dataclass(frozen=True)
+class DeciderSettings:
+    decider: str = "rule"
+    model_name: str = "qwen3-4b-instruct-2507"
+    model_url: str = "http://127.0.0.1:1234/v1"
+    model_timeout_s: float = 3.0
+    model_warmup_s: float = 120.0
+    decision_log_dir: str = "logs"
+
+
+@dataclass(frozen=True)
 class Settings:
     browser: BrowserSettings = field(default_factory=BrowserSettings)
     pacing: PacingSettings = field(default_factory=PacingSettings)
     weights: StrategyWeights = field(default_factory=StrategyWeights)
     run: RunSettings = field(default_factory=RunSettings)
+    decider: DeciderSettings = field(default_factory=DeciderSettings)
 
 
-def _from_env(cls):
+def _from_values(cls, getter, base=None):
+    base = base or cls()
     overrides = {}
     for f in fields(cls):
-        raw = os.getenv(f.name.upper(), "").strip()
+        raw = str(getter(f.name) or "").strip()
         if not raw:
             continue
-        default = getattr(cls(), f.name)
+        default = getattr(base, f.name)
         if isinstance(default, bool):
             overrides[f.name] = raw.lower() in ("1", "true", "yes", "on")
         elif isinstance(default, tuple):
             overrides[f.name] = tuple(float(part) for part in raw.split(","))
         else:
             overrides[f.name] = type(default)(raw)
-    return cls(**overrides)
+    return replace(base, **overrides)
+
+
+def _from_env(cls):
+    return _from_values(cls, lambda name: os.getenv(name.upper()))
+
+
+def _from_env_values(base, mapping):
+    lowered = {k.lower(): v for k, v in mapping.items()}
+    return _from_values(type(base), lowered.get, base)
 
 
 def load_settings():
@@ -90,4 +112,5 @@ def load_settings():
         pacing=_from_env(PacingSettings),
         weights=_from_env(StrategyWeights),
         run=_from_env(RunSettings),
+        decider=_from_env(DeciderSettings),
     )

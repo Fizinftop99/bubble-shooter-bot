@@ -14,3 +14,6 @@ NEIGHBOR_DIST = 36
 SHOOTER_POS = (278, 516)
 RESTART_BUTTON_POS = (592, 75)
 GAME_OVER_OK_POS = (343, 300)
+NEXT_BUBBLE_POS = (38, 516)
+LIFE_SLOT_XS = (80, 118, 155, 193, 230)  # magazine slots between the next bubble and the shooter; a grey bubble is a life
+LIFE_SLOT_Y = 516

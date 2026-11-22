@@ -1,4 +1,6 @@
 import math
+import os
+from dataclasses import dataclass
 
 from . import layout
 from .config import StrategyWeights
@@ -8,8 +10,10 @@ CONTACT_DIST = 29
 MAX_BOUNCES = 2
 MAX_SNAP_DIST = 20
 MIN_POP = 3
-ANGLE_MIN_DEG = 8
-ANGLE_MAX_DEG = 172
+# The game clamps the launch to 15 degrees above the horizontal (Cannon.cannonFired), and below about 10 degrees
+# the click at CLICK_DISTANCE falls outside the clickable area and fires nothing; so aim only where the game shoots.
+ANGLE_MIN_DEG = 15
+ANGLE_MAX_DEG = 165
 ANGLE_STEP_DEG = 0.5
 CLICK_DISTANCE = 250
 WIDTH_BONUS = 0.05
@@ -120,48 +124,99 @@ def _evaluate(cell, bubbles, shooter_color, max_row, weights, labels):
         dropped = len(rest) - len(anchored)
         score = len(cluster) + weights.drop_weight * dropped + weights.depth_weight * row
         removed_ids = cluster | {id(b) for b in rest if id(b) not in anchored}
-        score -= weights.color_wipe_penalty * _wiped_colours(labels, removed_ids, len(anchored), weights)
+        wiped = _wiped_colours(labels, removed_ids, len(anchored), weights)
+        score -= weights.color_wipe_penalty * wiped
         if max_row >= weights.pressure_row:
             new_max_row = max((b["row"] for b in rest if id(b) in anchored), default=0)
             score += weights.front_weight * (max_row - new_max_row)
-        return score, f"pop {len(cluster)} drop {dropped}"
+        return score, f"pop {len(cluster)} drop {dropped}", wiped
     friends = len(cluster) - 1
     growth = max(0, row - max_row)
     penalty = weights.growth_penalty + (weights.front_weight if max_row >= weights.pressure_row else 0)
     score = weights.miss_base + weights.friend_weight * friends - penalty * growth
-    return score, f"no pop (joins {friends} same-colour)"
+    return score, f"no pop (joins {friends} same-colour)", 0
+
+
+@dataclass(frozen=True)
+class Candidate:
+    cell: tuple
+    degs: tuple
+    score: float
+    why: str
+    wiped: int
+
+    def aim(self, origin=layout.SHOOTER_POS):
+        mid = math.radians(self.degs[len(self.degs) // 2])
+        x = origin[0] + CLICK_DISTANCE * math.cos(mid)
+        y = origin[1] - CLICK_DISTANCE * math.sin(mid)
+        return round(x), round(y), f"{self.why} at cell {self.cell[:2]} angle {math.degrees(mid):.1f}"
+
+
+def list_candidates(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
+    """Every reachable cell with its score. Uses strategy_fast (numba, identical candidates) when available."""
+    if not bubbles or shooter_color is None:
+        return []
+    fast = _fast_module()
+    if fast is not None:
+        result = fast.list_candidates(shooter_color, bubbles, origin, weights)
+        if result is not None:
+            return result
+    return _list_candidates_pure(shooter_color, bubbles, origin, weights)
+
+
+_FAST = []
+
+
+def _fast_module():
+    """strategy_fast, or None without numba or with BUBBLE_SIM_PURE=1. Imported lazily: it imports this module."""
+    if not _FAST:
+        module = None
+        if os.environ.get("BUBBLE_SIM_PURE") != "1":
+            try:
+                from . import strategy_fast as module
+            except ImportError:
+                module = None
+        _FAST.append(module)
+    return _FAST[0]
+
+
+def _list_candidates_pure(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
+    cells = _lattice(bubbles)
+    occupied = {(b["x"], b["y"]) for b in bubbles}
+    max_row = max(b["row"] for b in bubbles)
+    labels = _colour_labels(bubbles)
+    by_cell = {}
+    steps = int((ANGLE_MAX_DEG - ANGLE_MIN_DEG) / ANGLE_STEP_DEG) + 1
+    for i in range(steps):
+        deg = ANGLE_MIN_DEG + i * ANGLE_STEP_DEG
+        point = _trace(bubbles, origin, math.radians(deg))
+        if point is None:
+            continue
+        cell = _landing_cell(point, occupied, cells)
+        if cell:
+            by_cell.setdefault(cell[1:], []).append(deg)
+    candidates = []
+    for cell, degs in by_cell.items():
+        score, why, wiped = _evaluate(cell, bubbles, shooter_color, max_row, weights, labels)
+        score += min(len(degs), WIDTH_BONUS_CAP) * WIDTH_BONUS
+        candidates.append(Candidate(cell, tuple(degs), score, why, wiped))
+    return candidates
+
+
+def best_candidate(candidates):
+    best = None
+    for candidate in candidates:
+        if best is None or candidate.score > best.score:
+            best = candidate
+    return best
 
 
 def choose_target(shooter_color, bubbles, origin=layout.SHOOTER_POS, weights=StrategyWeights()):
     if not bubbles:
         return None
-    if shooter_color is not None:
-        cells = _lattice(bubbles)
-        occupied = {(b["x"], b["y"]) for b in bubbles}
-        max_row = max(b["row"] for b in bubbles)
-        labels = _colour_labels(bubbles)
-        by_cell = {}
-        steps = int((ANGLE_MAX_DEG - ANGLE_MIN_DEG) / ANGLE_STEP_DEG) + 1
-        for i in range(steps):
-            deg = ANGLE_MIN_DEG + i * ANGLE_STEP_DEG
-            point = _trace(bubbles, origin, math.radians(deg))
-            if point is None:
-                continue
-            cell = _landing_cell(point, occupied, cells)
-            if cell:
-                by_cell.setdefault(cell[1:], []).append(deg)
-        best = None
-        for cell, degs in by_cell.items():
-            score, why = _evaluate(cell, bubbles, shooter_color, max_row, weights, labels)
-            score += min(len(degs), WIDTH_BONUS_CAP) * WIDTH_BONUS
-            if best is None or score > best[0]:
-                best = (score, cell, degs, why)
-        if best:
-            _, cell, degs, why = best
-            mid = math.radians(degs[len(degs) // 2])
-            x = origin[0] + CLICK_DISTANCE * math.cos(mid)
-            y = origin[1] - CLICK_DISTANCE * math.sin(mid)
-            return round(x), round(y), f"{why} at cell {cell[:2]} angle {math.degrees(mid):.1f}"
+    best = best_candidate(list_candidates(shooter_color, bubbles, origin, weights))
+    if best:
+        return best.aim(origin)
     top_row = min(b["row"] for b in bubbles)
     b = min((b for b in bubbles if b["row"] == top_row), key=lambda b: abs(b["x"] - origin[0]))
     return b["x"], b["y"], "fallback: no simulated shot, aiming at top row"

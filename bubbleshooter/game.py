@@ -1,7 +1,9 @@
 import time
 from pathlib import Path
 
-from . import bot, strategy, vision
+from . import bot, vision
+from .decider import RuleDecider
+from .landing import LandingLog, SURPRISES, check
 
 RETRY_WAIT_S = 0.5
 STALL_LIMIT = 8
@@ -14,9 +16,10 @@ SETTLE_STABLE_FRAMES = 2
 
 
 class GameLoop:
-    def __init__(self, browser, settings):
+    def __init__(self, browser, settings, decider=None):
         self._browser = browser
         self._settings = settings
+        self._decider = decider or RuleDecider(settings.weights)
         self._aimer = bot.HumanAimer(settings.pacing)
         self._shots = 0
         self._stall_streak = 0
@@ -27,6 +30,8 @@ class GameLoop:
         self._window_closed = False
         self._game_over = False
         self._started = time.monotonic()
+        self._landing = LandingLog(settings.decider.decision_log_dir)
+        self._pending = None  # (shot number, bubbles, frame, reason) of the last shot, checked on the next frame
 
     def run(self):
         try:
@@ -67,8 +72,12 @@ class GameLoop:
             return
         shooter = vision.get_shooter_color(img)
         bubbles = vision.find_grid_bubbles(img)
-        result = strategy.choose_target(shooter, bubbles, weights=self._settings.weights)
-        if shooter is None or result is None:
+        next_color = vision.get_next_color(img)
+        lives = vision.count_lives(img)
+        if shooter is not None:
+            self._check_landing(img, bubbles)
+        decision = None if shooter is None else self._decider.decide(shooter, bubbles, next_color, lives)
+        if decision is None:
             self._empty_streak += 1
             print(f"[wait] shooter={shooter} bubbles={len(bubbles)}")
             time.sleep(RETRY_WAIT_S)
@@ -77,18 +86,37 @@ class GameLoop:
         self._track_stuck(shooter, bubbles)
         if self._stop_reason() is not None:
             return
-        tx, ty, reason = result
+        tx, ty, reason = decision.x, decision.y, decision.reason
         try:
             x, y = self._aimer.shoot(self._browser.page, bbox, (tx, ty))
         except Exception as e:
             self._on_error(e)
             return
         self._shots += 1
-        print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} rows={max(b['row'] for b in bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}")
+        self._pending = (self._shots, bubbles, img, reason)
+        print(f"#{self._shots} shooter={shooter} next={next_color} lives={lives} bubbles={len(bubbles)} rows={max(b['row'] for b in bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}{self._decider_note(decision)}")
         if self._settings.pacing.adaptive_wait:
             self._wait_settled(bubbles)
         else:
             time.sleep(self._settings.pacing.shot_wait_s)
+
+    def _check_landing(self, img, bubbles):
+        if self._pending is None:
+            return
+        shot, before, before_img, reason = self._pending
+        self._pending = None
+        record = check(before, bubbles, reason)
+        self._landing.write(shot, record, before_img, img, reason=reason)
+        if record["outcome"] in SURPRISES:
+            detail = f" actual={record['actual_cell']}" if record["actual_cell"] else ""
+            print(f"[landing] #{shot} {record['outcome']}: predicted {record['predicted_cell']}{detail} "
+                  f"added={record['added']} removed={record['removed']} (expected {record['predicted_removed']})")
+
+    def _decider_note(self, decision):
+        if self._decider.name == "rule":
+            return ""
+        outcome = f"fallback={decision.fallback!r}" if decision.fallback else f"agrees_with_rule={decision.agrees_with_rule}"
+        return f" decider={decision.source} latency={decision.latency_ms:.0f}ms {outcome}"
 
     def _classify_game_over(self):
         time.sleep(DIALOG_SETTLE_S)
@@ -158,6 +186,10 @@ class GameLoop:
         print(f"STATUS: {outcome}")
         print(f"shots fired: {self._shots}")
         print(f"play time:   {int(elapsed // 60)}m {int(elapsed % 60)}s")
+        print(self._landing.summary())
+        print(f"landing log: {self._landing.path}")
+        if self._decider.name != "rule":
+            print(self._decider.summary())
         if screenshot:
             print(f"final screen (shows score): {screenshot}")
         print("=" * 50)
