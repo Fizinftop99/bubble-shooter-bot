@@ -1,4 +1,5 @@
 import math
+import os
 import random
 
 from .. import layout
@@ -126,10 +127,12 @@ class SimGame:
         self.shots += 1
         color = self.ready
         vx, vy = self._launch_velocity(click[0] / SCREEN_SCALE, click[1] / SCREEN_SCALE)
-        cell = self._fly(vx, vy)
-        self.last_cell = cell
-        self.board[cell] = color
-        popped = self._resolve_landing(cell, color)
+        popped = self._land_fast(vx, vy, color) if FAST is not None else None
+        if popped is None:
+            cell = self._fly(vx, vy)
+            self.last_cell = cell
+            self.board[cell] = color
+            popped = self._resolve_landing(cell, color)
         self._promote()
         if not popped:
             self._lose_life()
@@ -147,7 +150,36 @@ class SimGame:
         rad = math.radians(angle + 90)
         return -LAUNCH_SPEED * math.cos(rad), -LAUNCH_SPEED * math.sin(rad)
 
+    def _land_fast(self, vx, vy, color):
+        """Fly, place and resolve in one numba call; None when the board is outside what the kernel handles."""
+        keys, colors = FAST.board_arrays(self.board)
+        status, bx, by, size, hanging, removed = FAST.shoot_kernel(keys, colors, vx, vy, color)
+        if status == FAST.NEVER_LANDED:
+            raise RuntimeError("shot never landed")
+        if status != FAST.OK:
+            return None
+        cell = (int(bx), int(by))
+        self.last_cell = cell
+        self.board[cell] = color
+        if size < MIN_POP:
+            return False
+        self._apply_pop(size, hanging, removed)
+        return True
+
+    def _apply_pop(self, size, hanging, removed):
+        for k in range(1, size + 1):
+            self.score += POP_SCORE_UNIT * math.ceil(k / POP_SCORE_GROUP)
+        for c in removed.tolist():
+            del self.board[tuple(c)]
+        self.score += HANG_SCORE * hanging
+
     def _fly(self, vx, vy):
+        if FAST is not None:
+            status, bx, by = FAST.fly_kernel(*FAST.board_arrays(self.board), vx, vy)
+            if status == FAST.NEVER_LANDED:
+                raise RuntimeError("shot never landed")
+            if status == FAST.OK:
+                return int(bx), int(by)
         x, y = SHOOTER_X, SHOOTER_Y
         centers = [(_cell_center(*cell), cell) for cell in self.board]
         for _ in range(MAX_FLIGHT_FRAMES):
@@ -190,6 +222,13 @@ class SimGame:
         return seen
 
     def _resolve_landing(self, cell, color):
+        if FAST is not None:
+            status, size, hanging, removed = FAST.resolve_kernel(*FAST.board_arrays(self.board), cell[0], cell[1], color)
+            if status == FAST.OK:
+                if size < MIN_POP:
+                    return False
+                self._apply_pop(size, hanging, removed)
+                return True
         cluster = self._cluster(cell, color)
         if len(cluster) < MIN_POP:
             return False
@@ -201,6 +240,12 @@ class SimGame:
         return True
 
     def _drop_hanging(self):
+        if FAST is not None:
+            status, removed = FAST.drop_kernel(*FAST.board_arrays(self.board))
+            if status == FAST.OK:
+                for c in removed.tolist():
+                    del self.board[tuple(c)]
+                return len(removed)
         anchored = {c for c in self.board if c[1] == 0}
         frontier = list(anchored)
         while frontier:
@@ -241,3 +286,17 @@ class SimGame:
             self.won = True
         elif any(by >= LOSS_ROW for _, by in self.board):
             self.lost = True
+
+
+def _load_fast():
+    """The numba kernels (engine_fast), or None without numba or with BUBBLE_SIM_PURE=1. Both paths give identical games."""
+    if os.environ.get("BUBBLE_SIM_PURE") == "1":
+        return None
+    try:
+        from . import engine_fast
+    except ImportError:
+        return None
+    return engine_fast
+
+
+FAST = _load_fast()
