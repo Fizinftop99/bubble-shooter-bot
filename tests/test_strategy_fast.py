@@ -9,6 +9,12 @@ SHOTS_PER_SEED = 120
 SPARSE_WEIGHTS = StrategyWeights(wipe_free_bubbles=5, pressure_row=3, front_weight=2.5)
 
 
+@pytest.fixture(autouse=True)
+def pure_reference(monkeypatch):
+    """strategy.choose_target is the reference, so keep it on the pure Python list_candidates."""
+    monkeypatch.setattr(strategy, "_FAST", [None])
+
+
 @pytest.mark.parametrize("weights", [StrategyWeights(), SPARSE_WEIGHTS])
 def test_fast_choice_matches_reference(weights):
     compared = 0
