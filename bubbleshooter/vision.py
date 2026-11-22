@@ -16,6 +16,7 @@ GAME_OVER_LINE_MIN_B = 245
 BONUS_ROW_Y = 218
 BONUS_ROW_X_RANGE = (300, 471)
 BONUS_DIGIT_MIN_PIXELS = 40
+EMPTY_SLOT_COLOR = (192, 192, 255)
 
 
 def color_distance(a, b):
@@ -48,6 +49,16 @@ def sample_color(img, cx, cy):
 def get_shooter_color(img):
     color = sample_color(img, *layout.SHOOTER_POS)
     return color if is_bubble_color(color) else None
+
+
+def get_next_color(img):
+    color = sample_color(img, *layout.NEXT_BUBBLE_POS)
+    return color if is_bubble_color(color) else None
+
+
+def count_lives(img):
+    """Filled magazine slots. A slot counts unless it shows the empty background, so a bubble flying over it still counts."""
+    return sum(not colors_match(sample_color(img, x, layout.LIFE_SLOT_Y), EMPTY_SLOT_COLOR) for x in layout.LIFE_SLOT_XS)
 
 
 def _is_solid_bubble(img, cx, cy):

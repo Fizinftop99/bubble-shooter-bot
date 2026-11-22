@@ -117,8 +117,9 @@ def test_prompt_matches_the_training_prompt_of_the_same_position():
     teacher.decide(game.shooter_color(), game.bubbles())
     record = dataset.make_record(1001, game, teacher)
     client = FakeClient('{"row": 0, "col": 0}')
-    decider.ModelDecider(WEIGHTS, SETTINGS, client=client).decide(game.shooter_color(), game.bubbles())
+    decider.ModelDecider(WEIGHTS, SETTINGS, client=client).decide(game.shooter_color(), game.bubbles(), game.next_color(), game.lives)
     assert client.prompts[0] == prompt_from_record(record)
+    assert "Next colour: " in client.prompts[0] and f"Lives left: {game.lives}" in client.prompts[0]
 
 
 def assert_falls_back(client, expected):

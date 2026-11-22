@@ -10,6 +10,7 @@ what the player can see too (the bubble in hand and the next one in the queue).
 import argparse
 import copy
 import csv
+import dataclasses
 import random
 import statistics
 import time
@@ -40,6 +41,17 @@ class TeacherConfig:
     win_bonus: float = 200.0
     survive_weight: float = 2.0
     fast_rule: bool = False
+
+
+# Outcome-function presets for comparing what the teacher optimises (see outcome_value). "base" is the dataset's.
+NO_SCORE = 1e12  # score_unit this large makes the score term vanish
+OUTCOMES = {
+    "base": {},
+    "nowin": {"win_bonus": 0.0},
+    "noscore": {"win_bonus": 0.0, "score_unit": NO_SCORE},
+    "loss1000": {"win_bonus": 0.0, "score_unit": NO_SCORE, "loss_penalty": 1000.0},
+    "front6": {"win_bonus": 0.0, "score_unit": NO_SCORE, "row_weight": 6.0},
+}
 
 
 def rule_function(cfg):
@@ -111,7 +123,7 @@ class RolloutTeacher:
         candidates = strategy.list_candidates(shooter_color, bubbles, weights=self._weights)
         return sorted(candidates, key=lambda c: -c.score)[: self._cfg.top_k]
 
-    def decide(self, shooter_color, bubbles):
+    def decide(self, shooter_color, bubbles, next_color=None, lives=None):
         game = self._game
         if game is None:
             raise RuntimeError("RolloutTeacher needs bind(game) before decide()")
@@ -187,7 +199,7 @@ def _job(job):
     return kind, result, time.time() - started
 
 
-def run(seeds, max_shots, cfg, workers, with_rule=True):
+def run(seeds, max_shots, cfg, workers, with_rule=True, on_teacher_result=None):
     jobs = [("teacher", seed, max_shots, cfg) for seed in seeds]
     if with_rule:
         jobs = [("rule", seed, max_shots, cfg) for seed in seeds] + jobs
@@ -200,6 +212,8 @@ def run(seeds, max_shots, cfg, workers, with_rule=True):
     for kind, result, seconds in done:
         results[kind].append(result)
         if kind == "teacher":
+            if on_teacher_result:
+                on_teacher_result(result)
             print(
                 f"  seed {result.seed:3d}: {result.outcome:5} shots {result.shots:4d} score {result.score:7d} "
                 f"differs {result.differs_from_rule:3d} {result.latency_ms_mean:6.0f} ms/decision ({seconds:.0f}s)",
@@ -258,23 +272,41 @@ def main():
     parser.add_argument("--rollouts", type=int, default=TeacherConfig.rollouts)
     parser.add_argument("--depth", type=int, default=TeacherConfig.depth)
     parser.add_argument("--margin", type=float, default=TeacherConfig.margin, help="keep the rule's shot unless the teacher's is better by more than this")
+    parser.add_argument("--outcome", choices=sorted(OUTCOMES), default="base", help="outcome-function preset the rollouts are scored with")
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--no-rule", action="store_true", help="skip the rule run on the same seeds")
     parser.add_argument("--fast", action="store_true", help="use the numba rule inside rollouts (same shots, about 40x faster; needs `uv sync --group fast`)")
     args = parser.parse_args()
-    cfg = TeacherConfig(top_k=args.top_k, rollouts=args.rollouts, depth=args.depth, margin=args.margin, fast_rule=args.fast)
+    cfg = TeacherConfig(
+        top_k=args.top_k, rollouts=args.rollouts, depth=args.depth, margin=args.margin, fast_rule=args.fast, **OUTCOMES[args.outcome]
+    )
     seeds = range(args.seed_start, args.seed_start + args.games)
-    label = f"teacher_k{cfg.top_k}_n{cfg.rollouts}_d{cfg.depth}" + (f"_m{cfg.margin:g}" if cfg.margin else "")
+    label = (
+        f"teacher_k{cfg.top_k}_n{cfg.rollouts}_d{cfg.depth}"
+        + (f"_m{cfg.margin:g}" if cfg.margin else "")
+        + (f"_o-{args.outcome}" if args.outcome != "base" else "")
+    )
     print(f"{label}: seeds {seeds.start}-{seeds.stop - 1}, max {args.max_shots} shots, {args.workers} workers", flush=True)
     started = time.time()
-    results = run(seeds, args.max_shots, cfg, args.workers, with_rule=not args.no_rule)
+    # Each finished game is appended to the CSV at once, so a killed run keeps what it already played.
+    RESULTS_DIR.mkdir(exist_ok=True)
+    csv_path = RESULTS_DIR / f"{label}_s{seeds.start}-{seeds.stop - 1}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    with csv_path.open("x", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=[f.name for f in dataclasses.fields(GameResult)])
+        writer.writeheader()
+
+        def append(result):
+            writer.writerow(asdict(result))
+            fh.flush()
+
+        results = run(seeds, args.max_shots, cfg, args.workers, with_rule=not args.no_rule, on_teacher_result=append)
     elapsed = time.time() - started
     if results["rule"]:
         print_summary("rule", results["rule"])
         print(f"  csv: {save_csv('teacher_rulebase', results['rule'])}")
     teacher = results["teacher"]
     print_summary(label, teacher)
-    print(f"  csv: {save_csv(f'{label}_s{seeds.start}-{seeds.stop - 1}', teacher)}  ({elapsed:.0f}s wall)")
+    print(f"  csv: {csv_path}  ({elapsed:.0f}s wall)")
     if results["rule"]:
         print_paired(results["rule"], teacher)
 

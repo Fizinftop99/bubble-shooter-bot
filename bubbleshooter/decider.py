@@ -28,7 +28,8 @@ SYSTEM_PROMPT = (
     "Bubbles left hanging without a path to row 0 drop, and each dropped bubble is worth far more than a popped one. "
     "A shot that does not pop costs a life; with no lives left, new rows are pushed in from the top. "
     "A bubble reaching row 15 loses the game. "
-    "Removing the last bubble of a colour makes every later push bigger, so avoid it unless the board is nearly clear.\n"
+    "Removing the last bubble of a colour makes every later push bigger, so avoid it unless the board is nearly clear. "
+    "The next colour is the bubble you will shoot after this one.\n"
     "You are given a few promising cells the shot can reach and what happens there. Pick exactly one of those cells. "
     'Answer with JSON only: {"row": <row>, "col": <col>}.'
 )
@@ -48,7 +49,7 @@ class Decision:
 class Decider(Protocol):
     name: str
 
-    def decide(self, shooter_color, bubbles) -> Decision | None: ...
+    def decide(self, shooter_color, bubbles, next_color=None, lives=None) -> Decision | None: ...
 
 
 class RuleDecider:
@@ -57,7 +58,7 @@ class RuleDecider:
     def __init__(self, weights):
         self._weights = weights
 
-    def decide(self, shooter_color, bubbles):
+    def decide(self, shooter_color, bubbles, next_color=None, lives=None):
         started = time.perf_counter()
         result = strategy.choose_target(shooter_color, bubbles, weights=self._weights)
         if result is None:
@@ -89,7 +90,8 @@ def _palette(shooter_color, bubbles):
     return letter
 
 
-def build_prompt(shooter_color, bubbles, candidates):
+def build_prompt(shooter_color, bubbles, candidates, next_color=None, lives=None):
+    """`next_color` and `lives` get their own lines when known; None leaves the line out."""
     letter = _palette(shooter_color, bubbles)
     rows, counts = {}, {}
     for b in bubbles:
@@ -106,6 +108,10 @@ def build_prompt(shooter_color, bubbles, candidates):
     lines.append("Bubbles per colour: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     lines.append(f"Lowest occupied row: {max(rows)} (row 15 loses)")
     lines.append(f"Shooter colour: {letter(shooter_color)}")
+    if next_color is not None:
+        lines.append(f"Next colour: {letter(next_color)}")
+    if lives is not None:
+        lines.append(f"Lives left: {lives}" + (" (a shot that does not pop pushes new rows)" if lives == 0 else ""))
     lines.append("Reachable cells:")
     for candidate in sorted(candidates, key=lambda c: cell_address(c.cell)):
         row, col = cell_address(candidate.cell)
@@ -187,7 +193,7 @@ class ModelDecider:
         except Exception as error:
             return str(error).splitlines()[0] if str(error) else type(error).__name__
 
-    def decide(self, shooter_color, bubbles):
+    def decide(self, shooter_color, bubbles, next_color=None, lives=None):
         candidates = strategy.list_candidates(shooter_color, bubbles, weights=self._weights)
         if len(candidates) < 2:
             return self._record(self._rule.decide(shooter_color, bubbles), bubbles)
@@ -195,7 +201,7 @@ class ModelDecider:
         # rule's own pick stays first on ties). Cells outside it are not offered, so the model cannot pick them.
         shortlist = sorted(candidates, key=lambda c: -c.score)[: self._shown]
         started = time.perf_counter()
-        candidate, problem = self._ask(shooter_color, bubbles, shortlist)
+        candidate, problem = self._ask(build_prompt(shooter_color, bubbles, shortlist, next_color, lives), shortlist)
         latency_ms = (time.perf_counter() - started) * 1000
         self.latencies_ms.append(latency_ms)
         best = strategy.best_candidate(candidates)
@@ -209,9 +215,8 @@ class ModelDecider:
             decision = Decision(*candidate.aim(), source="model", latency_ms=latency_ms, agrees_with_rule=agrees)
         return self._record(decision, bubbles)
 
-    def _ask(self, shooter_color, bubbles, candidates):
+    def _ask(self, prompt, candidates):
         by_address = {cell_address(c.cell): c for c in candidates}
-        prompt = build_prompt(shooter_color, bubbles, candidates)
         future = self._pool.submit(self._client.complete, SYSTEM_PROMPT, prompt, self._timeout_s)
         try:
             text = future.result(timeout=self._timeout_s)

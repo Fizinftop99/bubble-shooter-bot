@@ -59,7 +59,7 @@ def play(weights, seed, max_shots=DEFAULT_MAX_SHOTS, decider=None):
         if decider is None:
             x, y, reason = strategy.choose_target(game.shooter_color(), bubbles, weights=weights)
         else:
-            decision = decider.decide(game.shooter_color(), bubbles)
+            decision = decider.decide(game.shooter_color(), bubbles, game.next_color(), game.lives)
             x, y, reason = decision.x, decision.y, decision.reason
         popped = game.shoot((x, y))
         pops += popped

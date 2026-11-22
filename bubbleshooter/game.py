@@ -69,7 +69,9 @@ class GameLoop:
             return
         shooter = vision.get_shooter_color(img)
         bubbles = vision.find_grid_bubbles(img)
-        decision = None if shooter is None else self._decider.decide(shooter, bubbles)
+        next_color = vision.get_next_color(img)
+        lives = vision.count_lives(img)
+        decision = None if shooter is None else self._decider.decide(shooter, bubbles, next_color, lives)
         if decision is None:
             self._empty_streak += 1
             print(f"[wait] shooter={shooter} bubbles={len(bubbles)}")
@@ -86,7 +88,7 @@ class GameLoop:
             self._on_error(e)
             return
         self._shots += 1
-        print(f"#{self._shots} shooter={shooter} bubbles={len(bubbles)} rows={max(b['row'] for b in bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}{self._decider_note(decision)}")
+        print(f"#{self._shots} shooter={shooter} next={next_color} lives={lives} bubbles={len(bubbles)} rows={max(b['row'] for b in bubbles)} target=({tx},{ty}) click=({x:.0f},{y:.0f}) reason={reason}{self._decider_note(decision)}")
         if self._settings.pacing.adaptive_wait:
             self._wait_settled(bubbles)
         else:

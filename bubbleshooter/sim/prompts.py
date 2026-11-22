@@ -23,7 +23,7 @@ def prompt_from_record(record):
     for c in record["candidates"]:
         x, y = cell_pixel(c["row"], c["col"])
         candidates.append(SimpleNamespace(cell=(x, y, c["row"]), why=c["why"], wiped=c["wiped"]))
-    return build_prompt(PALETTE[record["shooter"]], bubbles, candidates)
+    return build_prompt(PALETTE[record["shooter"]], bubbles, candidates, PALETTE[record["next"]], record["lives"])
 
 
 def answer_from_record(record, index=None):

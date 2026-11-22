@@ -18,7 +18,7 @@ def play_and_compare(seed, shots):
     while not game.is_over and game.shots < shots:
         teacher.last_values = []
         top = teacher.top_candidates(game.shooter_color(), game.bubbles())
-        live = build_prompt(game.shooter_color(), game.bubbles(), top)
+        live = build_prompt(game.shooter_color(), game.bubbles(), top, game.next_color(), game.lives)
         decision = teacher.decide(game.shooter_color(), game.bubbles())
         record = dataset.make_record(seed, game, teacher)
         if record is not None:

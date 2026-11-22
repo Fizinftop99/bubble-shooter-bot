@@ -87,6 +87,9 @@ class SimGame:
     def shooter_color(self):
         return PALETTE[self.ready]
 
+    def next_color(self):
+        return PALETTE[self.queue]
+
     @staticmethod
     def layout_position(cell):
         bx, by = cell
