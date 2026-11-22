@@ -70,19 +70,43 @@ def clone_game(game, seed):
     return twin
 
 
-def outcome_value(game, start_score, start_shots, cfg):
+ALIVE, LOST, WON = 0, 1, 2
+
+
+def rollout_outcome(game, start_score, start_shots):
+    """Raw result of a rollout, free of any weighting: (points, status, shots, front, bubbles, lives).
+
+    points is the gain in final_score (already doubled on a win), status is ALIVE/LOST/WON, shots is how many
+    shots the rollout played, front the lowest occupied row (0 on an empty board). Stored in the dataset so any
+    outcome function can be applied later without the simulator (see value_of and sim/relabel.py).
+    """
+    status = LOST if game.lost else WON if game.won else ALIVE
+    front = max((by for _, by in game.board), default=0)
+    return game.final_score - start_score, status, game.shots - start_shots, front, len(game.board), game.lives
+
+
+def value_of(outcome, cfg):
     """Higher is better: score gained, a higher front line, fewer bubbles, more lives; losing is heavily punished."""
-    gained = (game.final_score - start_score) / cfg.score_unit
-    if game.lost:
-        return gained - cfg.loss_penalty + cfg.survive_weight * (game.shots - start_shots)
-    if game.won:
+    points, status, shots, front, bubbles, lives = outcome
+    gained = points / cfg.score_unit
+    if status == LOST:
+        return gained - cfg.loss_penalty + cfg.survive_weight * shots
+    if status == WON:
         return gained + cfg.win_bonus
-    front = max(by for _, by in game.board)
-    return gained - cfg.row_weight * front - cfg.bubble_weight * len(game.board) + cfg.life_weight * game.lives
+    return gained - cfg.row_weight * front - cfg.bubble_weight * bubbles + cfg.life_weight * lives
+
+
+def outcome_value(game, start_score, start_shots, cfg):
+    return value_of(rollout_outcome(game, start_score, start_shots), cfg)
 
 
 def rollout(game, click, seed, weights, cfg, memo=None):
-    """Shoot `click` on a reseeded copy, then play `depth` rule shots. `memo` reuses rule answers for identical positions."""
+    return value_of(rollout_result(game, click, seed, weights, cfg, memo), cfg)
+
+
+def rollout_result(game, click, seed, weights, cfg, memo=None):
+    """Shoot `click` on a reseeded copy, then play `depth` rule shots; returns rollout_outcome.
+    `memo` reuses rule answers for identical positions."""
     twin = clone_game(game, seed)
     twin.shoot(click)
     choose = rule_function(cfg)
@@ -98,7 +122,7 @@ def rollout(game, click, seed, weights, cfg, memo=None):
             if memo is not None:
                 memo[key] = target
         twin.shoot(target[:2])
-    return outcome_value(twin, game.score, game.shots, cfg)
+    return rollout_outcome(twin, game.score, game.shots)
 
 
 class RolloutTeacher:
@@ -114,6 +138,7 @@ class RolloutTeacher:
         self.model_shots = 0
         self.disagreements = 0
         self.last_values = []
+        self.last_outcomes = []  # per candidate in last_values order: the raw rollout_outcome of each rollout
 
     def bind(self, game):
         self._game = game
@@ -134,13 +159,16 @@ class RolloutTeacher:
             return None if result is None else Decision(*result)
         if len(top) == 1:
             self.last_values = []
+            self.last_outcomes = []
             return Decision(*top[0].aim(), source="rule", agrees_with_rule=True)
         base = (self._seed * SEED_STRIDE + game.shots) * SEED_STRIDE
-        values, memo = [], {}
+        values, outcomes, memo = [], [], {}
         for candidate in top:
             click = candidate.aim()[:2]
-            runs = [rollout(game, click, base + i, self._weights, self._cfg, memo) for i in range(self._cfg.rollouts)]
-            values.append(statistics.fmean(runs))
+            runs = [rollout_result(game, click, base + i, self._weights, self._cfg, memo) for i in range(self._cfg.rollouts)]
+            outcomes.append(runs)
+            values.append(statistics.fmean([value_of(run, self._cfg) for run in runs]))
+        self.last_outcomes = outcomes
         best = 0
         for i in range(1, len(top)):
             if values[i] > values[best]:
