@@ -84,8 +84,10 @@ class GameBrowser:
         time.sleep(SETTLE_WAIT_S)
 
     def _capture_page(self):
-        # fromSurface=False renders off-screen; the default capture makes the visible page flicker
-        reply = self._cdp.send("Page.captureScreenshot", {"format": SCREENSHOT_FORMAT, "fromSurface": False})
+        # fromSurface=False renders off-screen; the default capture makes the visible page flicker.
+        # Headless Chromium cannot capture that way, and with no window there is nothing to flicker.
+        from_surface = self._settings.browser.headless
+        reply = self._cdp.send("Page.captureScreenshot", {"format": SCREENSHOT_FORMAT, "fromSurface": from_surface})
         return Image.open(io.BytesIO(base64.b64decode(reply["data"]))).convert("RGB")
 
     def grab_frame(self):
